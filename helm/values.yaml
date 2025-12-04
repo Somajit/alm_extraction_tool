@@ -1,0 +1,22 @@
+replicaCount: 1
+
+image:
+  backend:
+    repository: alm_backend
+    tag: latest
+  frontend:
+    repository: alm_frontend
+    tag: latest
+
+service:
+  backend:
+    port: 8000
+  frontend:
+    port: 80
+
+mongo:
+  enabled: true
+  image: mongo:6.0
+  # If you want to use MongoDB Atlas instead of the bundled MongoDB, set:
+  # uri: "mongodb+srv://<user>:<password>@cluster0.xyz.mongodb.net/alm_db?retryWrites=true&w=majority"
+  uri: ""

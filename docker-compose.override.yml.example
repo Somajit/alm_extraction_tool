@@ -1,0 +1,9 @@
+version: '3.8'
+# Example override to point the backend at MongoDB Atlas using an env file
+services:
+  backend:
+    env_file:
+      - ./backend/.env.atlas
+    # If you prefer inline environment vars (not recommended for secrets):
+    # environment:
+    #  - MONGO_URI=mongodb+srv://<username>:<password>@cluster0.abcd123.mongodb.net/alm_db?retryWrites=true&w=majority

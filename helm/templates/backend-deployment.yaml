@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "alm-extraction.fullname" . }}-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag }}"
+          ports:
+            - containerPort: {{ .Values.service.backend.port }}
+          env:
+            - name: CORS_ORIGINS
+              value: "{{ .Values.service.backend.cors | default "http://localhost:5173" }}"
+{{- if .Values.mongo.uri }}
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "alm-extraction.fullname" . }}-mongo-secret
+                  key: uri
+{{- end }}

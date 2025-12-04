@@ -1,0 +1,5 @@
+backend\.env.atlas 
+backend\.env.local 
+frontend\node_modules 
+.DS_Store 
+*.log 
