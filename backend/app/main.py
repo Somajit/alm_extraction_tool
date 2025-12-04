@@ -5,7 +5,7 @@ from pydantic import BaseModel
 import motor.motor_asyncio
 from typing import List, Optional
 
-MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/alm_db')
+MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/alm_db')
 DEFAULT_ORIGINS = [os.environ.get('CORS_ORIGINS', 'http://localhost:5173')]
 
 client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
