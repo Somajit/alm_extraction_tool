@@ -1,9 +1,15 @@
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import motor.motor_asyncio
 from typing import List, Optional
+
+# Load .env file
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(dotenv_path=env_path)
 
 MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/alm_db')
 DEFAULT_ORIGINS = [os.environ.get('CORS_ORIGINS', 'http://localhost:5173')]

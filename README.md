@@ -1,53 +1,100 @@
-# ALM Extraction Tool (Frontend + Backend + Mongo)
+# ALM Extraction Tool (Frontend + Backend + MongoDB Atlas)
 
-This repository contains a Vite + React frontend and a FastAPI backend connected to MongoDB.
+This repository contains a Vite + React (TypeScript) frontend and a FastAPI backend connected to MongoDB Atlas.
 
-Quick start (Docker Desktop):
+## Quick Start (Docker - Recommended)
 
-1. Setup and start MongoDB locally:
+Run the entire stack with one command:
 
 ```cmd
-scripts\setup-and-test-mongo.bat
+scripts\deploy-all.bat
 ```
 
-This script will:
-- Remove any existing MongoDB container
-- Start a fresh MongoDB container
-- Wait for initialization
-- Test the connection
+This will:
+- Start MongoDB (local Docker container)
+- Build and deploy backend (port 8000)
+- Build and deploy frontend (port 5173)
 - Initialize sample data
 
-2. In a new terminal, start the backend:
+Then open http://localhost:5173 and login with: `admin` / `admin123`
 
+## Local Development Setup
+
+### Python Environment
+
+This project uses a global Python virtual environment located at `%USERPROFILE%\pyenv`.
+
+**One-time setup:**
+```cmd
+scripts\setup-pyenv.bat
+```
+
+This will create the virtual environment and install all required packages.
+
+**VS Code Integration:**
+- Virtual environment auto-activates when opening a terminal
+- Python interpreter automatically configured
+- No manual activation needed
+
+**Manual activation (if needed):**
+```cmd
+%USERPROFILE%\pyenv\Scripts\activate.bat
+```
+
+### Backend (Python)
+
+1. **Ensure pyenv is set up** (see above)
+
+2. **Create .env file** (if not exists):
+```
+MONGO_URI=mongodb+srv://admin:admin123@cluster0.uilvvya.mongodb.net/alm_db?retryWrites=true&w=majority
+CORS_ORIGINS=http://localhost:5173
+```
+
+3. **Run backend:**
 ```cmd
 cd backend
-pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-3. In another terminal, start the frontend:
+Backend will run on http://localhost:8000
 
+### Frontend (React + TypeScript)
+
+1. **Install dependencies:**
 ```cmd
 cd frontend
 npm install
+```
+
+2. **Run development server:**
+```cmd
 npm run dev
 ```
 
-4. Open http://localhost:5173 in your browser
+Frontend will run on http://localhost:5173
 
-5. Login with: `admin` / `admin123`
+### Add Sample Data
 
-Notes:
-- The local MongoDB container runs on `localhost:27017`
-- Sample data includes 2 domains, 3 projects, test plans, test labs, and defects
-- For MongoDB Atlas cloud setup, see `docs/ATLAS_SETUP.md`
-- For Docker Compose (all services together), use: `docker-compose up --build`
+```cmd
+cd scripts
+python add_sample_data.py
+```
 
-MongoDB Atlas (optional)
--------------------------
-If you prefer MongoDB Atlas instead of the local `mongo` container, follow these steps:
+## Login Credentials
 
-1. Create a MongoDB Atlas cluster at https://www.mongodb.com/cloud/atlas and create a database user with a secure password. Give the user at least readWrite on the target DB.
+- **admin** / admin123
+- **testuser** / test123
+- **developer** / dev123
+
+## MongoDB Setup
+
+Currently using **MongoDB Atlas (cloud)** - Free tier M0.
+
+Connection string in `backend/.env`:
+```
+MONGO_URI=mongodb+srv://admin:admin123@cluster0.uilvvya.mongodb.net/alm_db?retryWrites=true&w=majority
+```
 2. Add an IP access list entry for the machine(s) that will connect. For local testing you can add `0.0.0.0/0` (not recommended for production).
 3. Copy the connection string (SRV form) from the Atlas UI. It will look like:
 
