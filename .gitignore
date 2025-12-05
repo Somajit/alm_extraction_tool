@@ -49,3 +49,7 @@ htmlcov/
 # OS
 Thumbs.db
 desktop.ini
+
+# Database
+mongodb_data/
+mongodb_data/
