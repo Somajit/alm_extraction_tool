@@ -5,8 +5,8 @@ REM Usage: deploy-frontend.bat
 
 setlocal enabledelayedexpansion
 
-set CONTAINER_NAME=alm_frontend
-set IMAGE_NAME=alm_frontend
+set CONTAINER_NAME=frontend
+set IMAGE_NAME=releasecraft-frontend
 set WORKSPACE_ROOT=%~dp0..
 
 echo.

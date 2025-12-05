@@ -13,7 +13,6 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import { useNavigate } from 'react-router-dom'
 import { authenticate, getDomains, getProjects, Domain, Project } from '../api'
 
 interface LoginPageState {
@@ -28,8 +27,11 @@ interface LoginPageState {
   loading: boolean
 }
 
-const LoginPage: React.FC = () => {
-  const navigate = useNavigate()
+interface LoginProps {
+  onLogin: () => void
+}
+
+const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
   const [state, setState] = useState<LoginPageState>({
     step: 1,
     username: '',
@@ -49,7 +51,7 @@ const LoginPage: React.FC = () => {
     try {
       const res = await authenticate(state.username, state.password)
       if (res.data.ok) {
-        const domainsRes = await getDomains()
+        const domainsRes = await getDomains(state.username)
         setState(prev => ({
           ...prev,
           step: 2,
@@ -73,17 +75,25 @@ const LoginPage: React.FC = () => {
   }
 
   const handleDomainChange = async (e: SelectChangeEvent<string>) => {
-    const domain = e.target.value
-    setState(prev => ({ ...prev, selectedDomain: domain, loading: true }))
+    const domainName = e.target.value
+    setState(prev => ({ ...prev, selectedDomain: domainName, loading: true, error: '' }))
 
     try {
-      const res = await getProjects(domain)
-      setState(prev => ({
-        ...prev,
-        step: 3,
-        projects: res.data,
-        loading: false,
-      }))
+      const res = await getProjects(domainName, state.username)
+      if (res.data.length === 0) {
+        setState(prev => ({
+          ...prev,
+          error: `No projects found for domain: ${domainName}`,
+          loading: false,
+        }))
+      } else {
+        setState(prev => ({
+          ...prev,
+          step: 3,
+          projects: res.data,
+          loading: false,
+        }))
+      }
     } catch (err: any) {
       setState(prev => ({
         ...prev,
@@ -102,7 +112,7 @@ const LoginPage: React.FC = () => {
     localStorage.setItem('user', state.username)
     localStorage.setItem('domain', state.selectedDomain)
     localStorage.setItem('project', state.selectedProject)
-    navigate('/home')
+    onLogin()
   }
 
   return (
@@ -110,9 +120,9 @@ const LoginPage: React.FC = () => {
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
         <Card sx={{ width: '100%' }}>
           <CardContent>
-            <Typography variant="h5" component="h1" gutterBottom sx={{ mb: 3 }}>
-              ALM Extraction Tool
-            </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'center', mb: 3 }}>
+              <img src="/logo.svg" alt="ReleaseCraft Logo" style={{ height: '80px' }} />
+            </Box>
 
             {state.step === 1 && (
               <form onSubmit={handleAuthSubmit}>
@@ -156,9 +166,13 @@ const LoginPage: React.FC = () => {
                     value={state.selectedDomain}
                     onChange={handleDomainChange}
                     disabled={state.loading}
+                    displayEmpty
                   >
+                    <MenuItem value="" disabled>
+                      Select a domain...
+                    </MenuItem>
                     {state.domains.map(domain => (
-                      <MenuItem key={domain.id} value={domain.id}>
+                      <MenuItem key={domain.id} value={domain.name}>
                         {domain.name}
                       </MenuItem>
                     ))}
@@ -179,9 +193,16 @@ const LoginPage: React.FC = () => {
                   <Typography variant="body2" gutterBottom>
                     Select Project
                   </Typography>
-                  <Select value={state.selectedProject} onChange={handleProjectChange}>
+                  <Select 
+                    value={state.selectedProject} 
+                    onChange={handleProjectChange}
+                    displayEmpty
+                  >
+                    <MenuItem value="" disabled>
+                      Select a project...
+                    </MenuItem>
                     {state.projects.map(project => (
-                      <MenuItem key={project.id} value={project.id}>
+                      <MenuItem key={project.id} value={project.name}>
                         {project.name}
                       </MenuItem>
                     ))}

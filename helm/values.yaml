@@ -2,10 +2,10 @@ replicaCount: 1
 
 image:
   backend:
-    repository: alm_backend
+    repository: releasecraft_backend
     tag: latest
   frontend:
-    repository: alm_frontend
+    repository: releasecraft_frontend
     tag: latest
 
 service:
@@ -20,3 +20,13 @@ mongo:
   # If you want to use MongoDB Atlas instead of the bundled MongoDB, set:
   # uri: "mongodb+srv://<user>:<password>@cluster0.xyz.mongodb.net/alm_db?retryWrites=true&w=majority"
   uri: ""
+
+backend:
+  env:
+    USE_MOCK_ALM: "true"
+    MOCK_ALM_URL: "http://mock-alm:8001"
+    ALM_URL: "https://your-alm-server.com/qcbin"
+    MONGO_URI: "mongodb://mongo:27017/releasecraftdb"
+    CORS_ORIGINS: "http://localhost:5173"
+    # ALM_ENCRYPTION_KEY should be set as a Kubernetes secret
+

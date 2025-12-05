@@ -1,6 +1,6 @@
 apiVersion: v2
-name: alm-extraction
-description: ALM Extraction Tool Helm Chart
+name: releasecraft
+description: ReleaseCraft Helm Chart
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

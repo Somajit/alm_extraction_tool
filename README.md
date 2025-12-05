@@ -1,4 +1,4 @@
-# ALM Extraction Tool (Frontend + Backend + MongoDB Atlas)
+# ReleaseCraft (Frontend + Backend + MongoDB Atlas)
 
 This repository contains a Vite + React (TypeScript) frontend and a FastAPI backend connected to MongoDB Atlas.
 
@@ -89,35 +89,80 @@ python add_sample_data.py
 
 ## MongoDB Setup
 
-Currently using **MongoDB Atlas (cloud)** - Free tier M0.
+You can use either **Local MongoDB** or **MongoDB Atlas (cloud)**.
 
-Connection string in `backend/.env`:
+### Quick Switch Between MongoDB Types
+
+**Switch to Local MongoDB:**
+```cmd
+scripts\switch-to-local-mongo.bat
+```
+
+**Switch to MongoDB Atlas:**
+```cmd
+scripts\switch-to-atlas-mongo.bat
+```
+
+**Deploy with MongoDB choice:**
+```cmd
+scripts\deploy-all-with-choice.bat
+```
+This will prompt you to choose between Local (1) or Atlas (2) during deployment.
+
+### Current Configuration
+
+Backend reads MongoDB URI from `backend/.env`:
 ```
 MONGO_URI=mongodb+srv://admin:admin123@cluster0.uilvvya.mongodb.net/alm_db?retryWrites=true&w=majority
 ```
-2. Add an IP access list entry for the machine(s) that will connect. For local testing you can add `0.0.0.0/0` (not recommended for production).
-3. Copy the connection string (SRV form) from the Atlas UI. It will look like:
 
-```
-mongodb+srv://<username>:<password>@cluster0.abcd123.mongodb.net/alm_db?retryWrites=true&w=majority
-```
+### Local MongoDB Setup
 
-4. Configure your backend to use that URI. Options:
+For local development using Docker:
 
-- With `docker-compose`: set `MONGO_URI` for the `backend` service in the `environment` section. Do NOT commit credentials to version control. Example (use a `docker-compose.override.yml` or environment file):
-
-```yaml
-services:
-	backend:
-		environment:
-			- MONGO_URI=mongodb+srv://<username>:<password>@cluster0.abcd123.mongodb.net/alm_db?retryWrites=true&w=majority
+1. **Start MongoDB container:**
+```cmd
+docker run -d --name mongo -p 27017:27017 --network releasecraft_releasecraft-network mongo:6.0
 ```
 
-- With Helm / Kubernetes: set the value `mongo.uri` in `helm/values.yaml` or create a Kubernetes Secret and mount it into the backend deployment as an environment variable.
+2. **Initialize sample data:**
+```cmd
+python scripts\add_sample_data.py
+```
 
-5. Ensure DNS libraries are present so `mongodb+srv` URIs work. The backend requirements include `dnspython` which is required by the MongoDB driver for SRV resolution.
+3. **Switch backend to local:**
+```cmd
+scripts\switch-to-local-mongo.bat
+```
 
-6. Restart the backend and run the seed endpoint to populate demo data (if desired):
+### MongoDB Atlas Setup
+
+For cloud-based MongoDB (Free tier M0 available):
+
+1. Create cluster at https://www.mongodb.com/cloud/atlas
+2. Create database user (username: admin, password: admin123)
+3. Add IP to access list (0.0.0.0/0 for testing)
+4. Get connection string (SRV format)
+5. Update connection in `scripts\switch-to-atlas-mongo.bat` if different
+6. Run:
+```cmd
+scripts\switch-to-atlas-mongo.bat
+```
+
+### After Switching
+
+Always restart the backend after switching:
+
+**Docker:**
+```cmd
+docker restart backend
+```
+
+**Local development:**
+```cmd
+cd backend
+uvicorn app.main:app --reload
+```
 
 ```powershell
 curl -X POST http://localhost:8000/init

@@ -5,8 +5,8 @@ REM Usage: deploy-backend.bat
 
 setlocal enabledelayedexpansion
 
-set CONTAINER_NAME=alm_backend
-set IMAGE_NAME=alm_backend
+set CONTAINER_NAME=backend
+set IMAGE_NAME=releasecraft-backend
 set WORKSPACE_ROOT=%~dp0..
 
 echo.
@@ -61,7 +61,7 @@ docker run -d ^
     -p 8000:8000 ^
     -e MONGO_URI=mongodb://mongo:27017/alm_db ^
     -e CORS_ORIGINS=http://localhost:5173 ^
-    --link alm_mongo:mongo ^
+    --link mongo:mongo ^
     %IMAGE_NAME%:latest
 
 if errorlevel 1 (

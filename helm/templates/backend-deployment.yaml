@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "alm-extraction.fullname" . }}-backend
+  name: {{ include "releasecraft.fullname" . }}-backend
 spec:
   replicas: 1
   selector:
@@ -19,11 +19,26 @@ spec:
             - containerPort: {{ .Values.service.backend.port }}
           env:
             - name: CORS_ORIGINS
-              value: "{{ .Values.service.backend.cors | default "http://localhost:5173" }}"
+              value: "{{ .Values.backend.env.CORS_ORIGINS | default "http://localhost:5173" }}"
+            - name: USE_MOCK_ALM
+              value: "{{ .Values.backend.env.USE_MOCK_ALM }}"
+            - name: MOCK_ALM_URL
+              value: "{{ .Values.backend.env.MOCK_ALM_URL }}"
+            - name: ALM_URL
+              value: "{{ .Values.backend.env.ALM_URL }}"
+            - name: ALM_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "releasecraft.fullname" . }}-alm-secret
+                  key: encryption-key
+                  optional: true
 {{- if .Values.mongo.uri }}
             - name: MONGO_URI
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "alm-extraction.fullname" . }}-mongo-secret
+                  name: {{ include "releasecraft.fullname" . }}-mongo-secret
                   key: uri
+{{- else }}
+            - name: MONGO_URI
+              value: "{{ .Values.backend.env.MONGO_URI }}"
 {{- end }}

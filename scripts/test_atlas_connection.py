@@ -27,7 +27,7 @@ for env_name in [".env.local", ".env.atlas"]:
                     os.environ[key.strip()] = value.strip()
         break
 
-MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/alm_db')
+MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/releasecraftdb')
 
 async def test_connection():
     """Test Atlas connection and initialize sample data."""
@@ -52,7 +52,7 @@ async def test_connection():
             await db.users.delete_many({})
             await db.domains.delete_many({})
             await db.projects.delete_many({})
-            await db.tree.delete_many({})
+            await db.tree_cache.delete_many({})
             await db.defects.delete_many({})
             
             await db.users.insert_one({
@@ -74,7 +74,7 @@ async def test_connection():
             ])
             print("✓ Created projects: Project1, Project2, ProjectX")
             
-            await db.tree.insert_many([
+            await db.tree_cache.insert_many([
                 {"type": "testplan", "project": "Project1", "tree": [
                     {"id": "tp1", "label": "Root Plan", "children": [
                         {"id": "tp1-1", "label": "Suite 1"},

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1976d2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#42a5f5;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="32" cy="32" r="32" fill="url(#bg)"/>
+  
+  <!-- White RC monogram -->
+  <g transform="translate(32, 32)">
+    <!-- Letter R -->
+    <path d="M -14 -12 L -14 12 M -14 -12 L -6 -12 Q -2 -12 -2 -8 Q -2 -4 -6 -4 L -14 -4 M -6 -4 L -2 12" 
+          stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    
+    <!-- Letter C -->
+    <path d="M 10 -10 Q 2 -12 0 -8 Q -1 -4 -1 0 Q -1 4 0 8 Q 2 12 10 10" 
+          stroke="white" stroke-width="3" stroke-linecap="round" fill="none"/>
+    
+    <!-- Small rocket accent -->
+    <g transform="translate(8, -6) scale(0.35)">
+      <path d="M 0 -6 L -2 0 L 0 2 L 2 0 Z" fill="#ff6f00"/>
+      <path d="M 0 2 L -1 5 L 0 7 L 1 5 Z" fill="#ffa726"/>
+    </g>
+  </g>
+</svg>

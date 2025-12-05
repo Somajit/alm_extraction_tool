@@ -1,0 +1,1871 @@
+"""
+ALM Integration Module
+
+This module provides integration with ALM (Application Lifecycle Management) system
+to authenticate, fetch domains, projects, and test plan hierarchies.
+"""
+
+import logging
+from typing import Any, Dict, List, Optional
+import requests
+from cryptography.fernet import Fernet
+import os
+import base64
+from app.alm_config import ALMConfig
+
+
+# Setup logging
+logger = logging.getLogger(__name__)
+
+
+class ALM:
+    """
+    ALM Integration class to handle authentication and data fetching from ALM.
+    
+    Features:
+    - Authenticate users against ALM
+    - Fetch domains from ALM
+    - Fetch projects for a specific domain
+    - Fetch test plan folder hierarchy
+    - Store encrypted credentials in MongoDB
+    """
+    
+    def __init__(self, alm_base_url: str, db, encryption_key: Optional[str] = None):
+        """
+        Initialize ALM client.
+        
+        Args:
+            alm_base_url: Base URL of ALM server (e.g., "https://alm.company.com/qcbin")
+            db: MongoDB database instance
+            encryption_key: Optional encryption key for password encryption
+        """
+        self.base_url = alm_base_url.rstrip("/")
+        self.db = db
+        self.session = requests.Session()
+        self.session.verify = False  # Set to True if ALM has valid SSL cert
+        
+        # ALM session cookies
+        self.lwsso_cookie = None
+        self.qc_session_cookie = None
+        self.alm_user_cookie = None
+        self.xsrf_token = None
+        self.is_authenticated = False
+        
+        # Store credentials for re-authentication
+        self.stored_username = None
+        self.stored_password = None
+        
+        # Initialize encryption
+        if encryption_key:
+            self.cipher = Fernet(encryption_key.encode())
+        else:
+            # Generate a key if not provided (should be stored securely in production)
+            key = os.environ.get('ALM_ENCRYPTION_KEY')
+            if not key:
+                key = Fernet.generate_key().decode()
+                logger.warning(f"Generated new encryption key. Store this securely: {key}")
+            self.cipher = Fernet(key.encode())
+        
+        self.logger = logger
+        
+    def _encrypt_password(self, password: str) -> str:
+        """Encrypt password using Fernet symmetric encryption."""
+        return self.cipher.encrypt(password.encode()).decode()
+    
+    def _decrypt_password(self, encrypted_password: str) -> str:
+        """Decrypt password using Fernet symmetric encryption."""
+        return self.cipher.decrypt(encrypted_password.encode()).decode()
+    
+    def _set_alm_cookies(self):
+        """Set all required ALM cookies on the session."""
+        if self.lwsso_cookie:
+            self.session.cookies.set('LWSSO_COOKIE_KEY', self.lwsso_cookie)
+        if self.qc_session_cookie:
+            self.session.cookies.set('QCSession', self.qc_session_cookie)
+        if self.alm_user_cookie:
+            self.session.cookies.set('ALM_USER', self.alm_user_cookie)
+        if self.xsrf_token:
+            self.session.cookies.set('XSRF-TOKEN', self.xsrf_token)
+    
+    def _extract_cookies(self):
+        """Extract and store ALM cookies from session."""
+        cookies = self.session.cookies
+        # Use _cookies to iterate and get the first occurrence of each cookie
+        if 'LWSSO_COOKIE_KEY' in cookies:
+            try:
+                self.lwsso_cookie = cookies.get('LWSSO_COOKIE_KEY')
+            except:
+                # Handle duplicate cookies by getting the first one
+                for cookie in cookies:
+                    if cookie.name == 'LWSSO_COOKIE_KEY':
+                        self.lwsso_cookie = cookie.value
+                        break
+        if 'QCSession' in cookies:
+            try:
+                self.qc_session_cookie = cookies.get('QCSession')
+            except:
+                for cookie in cookies:
+                    if cookie.name == 'QCSession':
+                        self.qc_session_cookie = cookie.value
+                        break
+        if 'ALM_USER' in cookies:
+            try:
+                self.alm_user_cookie = cookies.get('ALM_USER')
+            except:
+                for cookie in cookies:
+                    if cookie.name == 'ALM_USER':
+                        self.alm_user_cookie = cookie.value
+                        break
+        if 'XSRF-TOKEN' in cookies:
+            try:
+                self.xsrf_token = cookies.get('XSRF-TOKEN')
+            except:
+                for cookie in cookies:
+                    if cookie.name == 'XSRF-TOKEN':
+                        self.xsrf_token = cookie.value
+                        break
+    
+    async def authenticate(self, username: str, password: str) -> Dict[str, Any]:
+        """
+        Authenticate user against ALM and store encrypted credentials in MongoDB.
+        
+        ALM Authentication Flow (2-step process):
+        1. POST to /authentication-point/authenticate with Basic Auth
+           - Returns LWSSO_COOKIE_KEY cookie
+        2. GET to /rest/site-session to create QC session
+           - Returns QCSession and XSRF-TOKEN cookies
+        3. Use cookies for subsequent API calls
+        
+        Args:
+            username: ALM username
+            password: ALM password
+            
+        Returns:
+            Dict with authentication status and message
+        """
+        try:
+            self.logger.info(f"Authenticating user: {username}")
+            
+            # Clear any existing cookies before authentication
+            self.session.cookies.clear()
+            
+            # Step 1: Authenticate with ALM using Basic Authentication
+            # ALM returns LWSSO_COOKIE_KEY cookie
+            auth_url = f"{self.base_url}/authentication-point/authenticate"
+            auth_response = self.session.post(
+                auth_url,
+                auth=(username, password),
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                },
+                verify=False  # Set to True in production with valid SSL
+            )
+            
+            if auth_response.status_code != 200 and auth_response.status_code != 201:
+                self.logger.warning(
+                    f"Authentication failed for user: {username}, "
+                    f"status: {auth_response.status_code}, "
+                    f"response: {auth_response.text[:200]}"
+                )
+                return {
+                    "ok": False,
+                    "message": f"Invalid username or password (Status: {auth_response.status_code})"
+                }
+            
+            # Extract and store LWSSO cookie
+            self._extract_cookies()
+            
+            if not self.lwsso_cookie:
+                self.logger.warning(f"No LWSSO cookie received for user: {username}")
+                return {
+                    "ok": False,
+                    "message": "Authentication failed - no LWSSO cookie"
+                }
+            
+            self.logger.info(f"Step 1 complete: LWSSO cookie received for {username}")
+            
+            # Step 2: Create QC Session with LWSSO cookie
+            session_url = f"{self.base_url}/rest/site-session"
+            
+            # Ensure LWSSO cookie is set for site-session call
+            self._set_alm_cookies()
+            
+            session_response = self.session.post(
+                session_url,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Cookie": f"LWSSO_COOKIE_KEY={self.lwsso_cookie}"
+                },
+                verify=False
+            )
+            
+            if session_response.status_code != 200 and session_response.status_code != 201:
+                self.logger.warning(
+                    f"Session creation failed for user: {username}, "
+                    f"status: {session_response.status_code}, "
+                    f"response: {session_response.text[:200]}"
+                )
+                return {
+                    "ok": False,
+                    "message": f"Failed to create session (Status: {session_response.status_code})"
+                }
+            
+            # Extract all session cookies (QCSession, ALM_USER, XSRF-TOKEN)
+            self._extract_cookies()
+            
+            if not self.qc_session_cookie:
+                self.logger.warning(f"No QCSession cookie received for user: {username}")
+                # Some ALM versions may not use QCSession, so this is just a warning
+            
+            self.logger.info(
+                f"Successfully authenticated and created session for: {username}. "
+                f"Cookies: LWSSO={bool(self.lwsso_cookie)}, QCSession={bool(self.qc_session_cookie)}, "
+                f"ALM_USER={bool(self.alm_user_cookie)}, XSRF-TOKEN={bool(self.xsrf_token)}"
+            )
+            
+            # Store credentials for re-authentication
+            self.stored_username = username
+            self.stored_password = password
+            self.is_authenticated = True
+            
+            # Encrypt password
+            encrypted_pwd = self._encrypt_password(password)
+            
+            # Store credentials in MongoDB (user-specific)
+            await self.db.user_credentials.update_one(
+                {"username": username},
+                {
+                    "$set": {
+                        "username": username,
+                        "password": encrypted_pwd,
+                        "logged_in": True
+                    }
+                },
+                upsert=True
+            )
+            
+            return {
+                "ok": True,
+                "message": "Authentication successful"
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Authentication error: {str(e)}", exc_info=True)
+            return {
+                "ok": False,
+                "message": f"Authentication error: {str(e)}"
+            }
+    
+    async def logout(self, username: str) -> bool:
+        """
+        Logout user and remove credentials from MongoDB.
+        
+        ALM Logout Flow (2-step process):
+        1. DELETE /rest/site-session to end QC session
+        2. GET /authentication-point/logout to clear LWSSO cookie
+        
+        Args:
+            username: ALM username
+            
+        Returns:
+            True if successful
+        """
+        try:
+            self.logger.info(f"Logging out user: {username}")
+            
+            # Step 1: End QC Session
+            session_url = f"{self.base_url}/rest/site-session"
+            try:
+                self.session.delete(
+                    session_url,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json"
+                    },
+                    verify=False
+                )
+            except Exception as e:
+                self.logger.warning(f"QC session deletion failed: {e}")
+            
+            # Step 2: Logout from ALM authentication
+            logout_url = f"{self.base_url}/authentication-point/logout"
+            try:
+                self.session.get(
+                    logout_url,
+                    headers={"Accept": "application/json"},
+                    verify=False
+                )
+            except Exception as e:
+                self.logger.warning(f"ALM logout request failed: {e}")
+            
+            # Remove credentials from MongoDB
+            await self.db.user_credentials.delete_one({"username": username})
+            
+            # Clear session cookies and stored credentials
+            self.session.cookies.clear()
+            self.lwsso_cookie = None
+            self.qc_session_cookie = None
+            self.alm_user_cookie = None
+            self.xsrf_token = None
+            self.stored_username = None
+            self.stored_password = None
+            self.is_authenticated = False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Logout error: {str(e)}", exc_info=True)
+            return False
+    
+    async def _api_call_with_retry(
+        self,
+        method: str,
+        url: str,
+        max_retries: int = 3,
+        **kwargs
+    ) -> requests.Response:
+        """
+        Make an API call with automatic retry and re-authentication.
+        
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Full URL to call
+            max_retries: Maximum number of retry attempts
+            **kwargs: Additional arguments for requests call
+            
+        Returns:
+            Response object
+        """
+        # Ensure all ALM cookies are set
+        self._set_alm_cookies()
+        
+        # Add cookies to headers if not already present
+        if 'headers' not in kwargs:
+            kwargs['headers'] = {}
+        
+        # Build cookie string with all required cookies
+        cookie_parts = []
+        if self.lwsso_cookie:
+            cookie_parts.append(f"LWSSO_COOKIE_KEY={self.lwsso_cookie}")
+        if self.qc_session_cookie:
+            cookie_parts.append(f"QCSession={self.qc_session_cookie}")
+        if self.alm_user_cookie:
+            cookie_parts.append(f"ALM_USER={self.alm_user_cookie}")
+        if self.xsrf_token:
+            cookie_parts.append(f"XSRF-TOKEN={self.xsrf_token}")
+        
+        if cookie_parts:
+            kwargs['headers']['Cookie'] = "; ".join(cookie_parts)
+        
+        for attempt in range(max_retries):
+            try:
+                response = self.session.request(method, url, **kwargs)
+                
+                # If successful, return response
+                if response.status_code in [200, 201]:
+                    return response
+                
+                # If authentication error (401), try to re-authenticate
+                if response.status_code == 401:
+                    self.logger.warning(
+                        f"Authentication failed (401) on attempt {attempt + 1}/{max_retries}. "
+                        f"Attempting re-authentication..."
+                    )
+                    
+                    if self.stored_username and self.stored_password:
+                        # Re-authenticate
+                        auth_result = await self.authenticate(
+                            self.stored_username,
+                            self.stored_password
+                        )
+                        
+                        if auth_result["ok"]:
+                            self.logger.info("Re-authentication successful, retrying API call...")
+                            # Update cookies in kwargs
+                            cookie_parts = []
+                            if self.lwsso_cookie:
+                                cookie_parts.append(f"LWSSO_COOKIE_KEY={self.lwsso_cookie}")
+                            if self.qc_session_cookie:
+                                cookie_parts.append(f"QCSession={self.qc_session_cookie}")
+                            if self.alm_user_cookie:
+                                cookie_parts.append(f"ALM_USER={self.alm_user_cookie}")
+                            if self.xsrf_token:
+                                cookie_parts.append(f"XSRF-TOKEN={self.xsrf_token}")
+                            
+                            if cookie_parts:
+                                kwargs['headers']['Cookie'] = "; ".join(cookie_parts)
+                            continue
+                        else:
+                            self.logger.error("Re-authentication failed")
+                    else:
+                        self.logger.error("No stored credentials for re-authentication")
+                
+                # For other errors, return the response
+                return response
+                
+            except Exception as e:
+                self.logger.error(f"API call attempt {attempt + 1}/{max_retries} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    raise
+        
+        # Should not reach here, but return last response
+        return response
+    
+    async def get_user_credentials(self, username: str) -> Optional[Dict[str, str]]:
+        """
+        Retrieve and decrypt user credentials from MongoDB.
+        
+        Args:
+            username: ALM username
+            
+        Returns:
+            Dict with username and decrypted password, or None if not found
+        """
+        cred = await self.db.user_credentials.find_one({"username": username, "logged_in": True})
+        if not cred:
+            return None
+        
+        return {
+            "username": cred["username"],
+            "password": self._decrypt_password(cred["password"])
+        }
+    
+    async def fetch_domains(self, username: str) -> List[Dict[str, Any]]:
+        """
+        Fetch domains from ALM and store in MongoDB.
+        Supports pagination - fetches all domains in batches of 100.
+        
+        ALM API: GET /qcbin/rest/domains?start-index=1
+        Response: {"Domains": {"Domain": [{"Name": "..."}, ...]}}
+        
+        Args:
+            username: ALM username (for user-specific storage)
+            
+        Returns:
+            List of all domains
+        """
+        try:
+            self.logger.info(f"Fetching domains for user: {username}")
+            
+            all_domains = []
+            start_index = 1
+            page_size = 100
+            
+            while True:
+                # Get domains from ALM REST API with retry and pagination
+                domains_url = f"{self.base_url}{ALMConfig.get_endpoint('domains')}"
+                params = {"start-index": start_index}
+                
+                response = await self._api_call_with_retry(
+                    "GET",
+                    domains_url,
+                    params=params,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json"
+                    },
+                    verify=False
+                )
+                
+                if response.status_code != 200:
+                    self.logger.error(f"Failed to fetch domains: {response.status_code}, response: {response.text[:200]}")
+                    break
+                
+                data = response.json()
+                
+                # Extract domains from response
+                # ALM returns: {"Domains": {"Domain": [{"Name": "domain1"}, {"Name": "domain2"}]}}
+                domains = []
+                if isinstance(data, dict):
+                    # Try different response structures
+                    domain_data = data.get("Domains", {}).get("Domain", [])
+                    if not domain_data:
+                        domain_data = data.get("Domain", [])
+                    
+                    # Ensure it's a list
+                    if not isinstance(domain_data, list):
+                        domain_data = [domain_data] if domain_data else []
+                
+                for domain in domain_data:
+                    domain_name = domain.get("Name", "")
+                    if domain_name:
+                        domains.append({
+                            "name": domain_name,
+                            "username": username
+                        })
+                
+                # Add to results
+                all_domains.extend(domains)
+                
+                # Check if we need to fetch more
+                batch_count = len(domains)
+                self.logger.info(f"Fetched {batch_count} domains in batch starting at index {start_index}")
+                
+                if batch_count < page_size:
+                    # Last page, no more data
+                    break
+                
+                # Move to next batch
+                start_index += page_size
+            
+            # Store in MongoDB (user-specific)
+            if all_domains:
+                # Clear existing domains for this user
+                await self.db.domains_extracted.delete_many({"username": username})
+                # Insert new domains
+                await self.db.domains_extracted.insert_many(all_domains)
+            
+            self.logger.info(f"Fetched total {len(all_domains)} domains for user: {username}")
+            return all_domains
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching domains: {str(e)}", exc_info=True)
+            return []
+    
+    async def fetch_projects(self, username: str, domain: str) -> List[Dict[str, Any]]:
+        """
+        Fetch projects for a domain from ALM and store in MongoDB.
+        Supports pagination - fetches all projects in batches of 100.
+        
+        ALM API: GET /qcbin/rest/domains/{domain}/projects?start-index=1
+        Response: {"Projects": {"Project": [{"Name": "..."}, ...]}}
+        
+        Args:
+            username: ALM username (for user-specific storage)
+            domain: Domain name
+            
+        Returns:
+            List of all projects
+        """
+        try:
+            self.logger.info(f"Fetching projects for domain: {domain}, user: {username}")
+            
+            all_projects = []
+            start_index = 1
+            page_size = 100
+            
+            while True:
+                # Get projects from ALM REST API with retry and pagination
+                projects_url = f"{self.base_url}{ALMConfig.get_endpoint('projects', domain=domain)}"
+                params = {"start-index": start_index}
+                
+                response = await self._api_call_with_retry(
+                    "GET",
+                    projects_url,
+                    params=params,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json"
+                    },
+                    verify=False
+                )
+                
+                if response.status_code != 200:
+                    self.logger.error(f"Failed to fetch projects: {response.status_code}, response: {response.text[:200]}")
+                    break
+                
+                data = response.json()
+                
+                # Extract projects from response
+                # ALM returns: {"Projects": {"Project": [{"Name": "proj1"}, {"Name": "proj2"}]}}
+                projects = []
+                if isinstance(data, dict):
+                    # Try different response structures
+                    project_data = data.get("Projects", {}).get("Project", [])
+                    if not project_data:
+                        project_data = data.get("Project", [])
+                    
+                    # Ensure it's a list
+                    if not isinstance(project_data, list):
+                        project_data = [project_data] if project_data else []
+                    
+                    for project in project_data:
+                        project_name = project.get("Name", "")
+                        if project_name:
+                            projects.append({
+                                "name": project_name,
+                                "domain": domain,
+                                "username": username
+                            })
+                
+                # Add to results
+                all_projects.extend(projects)
+                
+                # Check if we need to fetch more
+                batch_count = len(projects)
+                self.logger.info(f"Fetched {batch_count} projects in batch starting at index {start_index}")
+                
+                if batch_count < page_size:
+                    # Last page, no more data
+                    break
+                
+                # Move to next batch
+                start_index += page_size
+            
+            # Store in MongoDB (user-specific)
+            if all_projects:
+                # Clear existing projects for this user and domain
+                await self.db.projects_extracted.delete_many({"username": username, "domain": domain})
+                # Insert new projects
+                await self.db.projects_extracted.insert_many(all_projects)
+            
+            self.logger.info(f"Fetched total {len(all_projects)} projects for domain: {domain}, user: {username}")
+            return all_projects
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching projects: {str(e)}", exc_info=True)
+            return []
+    
+    async def fetch_test_folders(
+        self, 
+        username: str, 
+        domain: str, 
+        project: str, 
+        parent_id: int = 0
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch test plan folders from ALM and store in MongoDB.
+        
+        Args:
+            username: ALM username (for user-specific storage)
+            domain: Domain name
+            project: Project name
+            parent_id: Parent folder ID (0 for root folders)
+            
+        Returns:
+            List of test folders
+        """
+        try:
+            self.logger.info(
+                f"Fetching test folders for project: {project}, parent_id: {parent_id}, user: {username}"
+            )
+            
+            # Build ALM REST API URL for test folders
+            # ALM API: GET /qcbin/rest/domains/{domain}/projects/{project}/test-folders
+            # Query: ?query={parent-id[0]} for root folders
+            folders_url = f"{self.base_url}{ALMConfig.get_endpoint('test-folders', domain=domain, project=project)}"
+            
+            all_folders = []
+            start_index = 1
+            page_size = 100
+            
+            while True:
+                # Query parameters to filter by parent-id with pagination
+                # ALM query syntax: {field-name[value]}
+                params = {
+                    "query": f"{{parent-id[{parent_id}]}}",
+                    "start-index": start_index
+                }
+                
+                response = await self._api_call_with_retry(
+                    "GET",
+                    folders_url,
+                    params=params,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json"
+                    },
+                    verify=False
+                )
+                
+                if response.status_code != 200:
+                    self.logger.error(
+                        f"Failed to fetch test folders: {response.status_code}, "
+                        f"response: {response.text[:200]}"
+                    )
+                    break
+                
+                data = response.json()
+                
+                # Extract folders from response
+                # ALM returns: {"entities": [{"Fields": [{"Name": "id", "values": [{"value": "123"}]}, ...]}, ...]}
+                folders = []
+                entities = []
+                
+                # Handle different response structures
+                if isinstance(data, dict):
+                    if "entities" in data:
+                        entities = data["entities"] if isinstance(data["entities"], list) else [data["entities"]]
+                    elif "Entity" in data:
+                        entities = data["Entity"] if isinstance(data["Entity"], list) else [data["Entity"]]
+                    elif "Fields" in data:
+                        # Single entity response
+                        entities = [data]
+                
+                for entity in entities:
+                    folder_data = self._extract_folder_fields(entity)
+                    if folder_data:
+                        folder_data.update({
+                            "username": username,
+                            "domain": domain,
+                            "project": project,
+                            "parent_id": parent_id
+                        })
+                        folders.append(folder_data)
+                
+                # Add to results
+                all_folders.extend(folders)
+                
+                # Check if we need to fetch more
+                batch_count = len(folders)
+                self.logger.info(f"Fetched {batch_count} test folders in batch starting at index {start_index}")
+                
+                if batch_count < page_size:
+                    # Last page, no more data
+                    break
+                
+                # Move to next batch
+                start_index += page_size
+            
+            # Store in MongoDB (user-specific)
+            if all_folders:
+                for folder in all_folders:
+                    # Update or insert folder
+                    await self.db.testplan_folders.update_one(
+                        {
+                            "id": folder["id"],
+                            "username": username,
+                            "project": project
+                        },
+                        {"$set": folder},
+                        upsert=True
+                    )
+            
+            self.logger.info(
+                f"Fetched total {len(all_folders)} test folders for project: {project}, "
+                f"parent_id: {parent_id}, user: {username}"
+            )
+            return all_folders
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching test folders: {str(e)}", exc_info=True)
+            return []
+    
+    @staticmethod
+    def sanitize_name(name: str) -> str:
+        """Replace special characters with underscore."""
+        import re
+        # Replace any non-alphanumeric character (except spaces, hyphens) with underscore
+        sanitized = re.sub(r'[^\w\s-]', '_', name)
+        # Replace multiple spaces/underscores with single underscore
+        sanitized = re.sub(r'[\s_]+', '_', sanitized)
+        return sanitized.strip('_')
+    
+    async def fetch_tests_for_folder(
+        self,
+        username: str,
+        domain: str,
+        project: str,
+        folder_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch tests for a specific folder from ALM.
+        Supports pagination - fetches all tests in batches of 100.
+        
+        Args:
+            username: ALM username
+            domain: Domain name
+            project: str
+            folder_id: Folder ID
+            
+        Returns:
+            List of all tests
+        """
+        try:
+            self.logger.info(f"Fetching tests for folder: {folder_id}, user: {username}")
+            
+            tests_url = f"{self.base_url}{ALMConfig.get_endpoint('tests', domain=domain, project=project)}"
+            
+            all_tests = []
+            start_index = 1
+            page_size = 100
+            
+            while True:
+                params = {
+                    "query": f"{{parent-id[{folder_id}]}}",
+                    "start-index": start_index
+                }
+                
+                response = await self._api_call_with_retry(
+                    "GET",
+                    tests_url,
+                    params=params,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json"
+                    },
+                    verify=False
+                )
+                
+                if response.status_code != 200:
+                    self.logger.error(f"Failed to fetch tests: {response.status_code}")
+                    break
+                
+                data = response.json()
+                tests = []
+                entities = []
+                
+                if isinstance(data, dict):
+                    if "entities" in data:
+                        entities = data["entities"] if isinstance(data["entities"], list) else [data["entities"]]
+                    elif "Entity" in data:
+                        entities = data["Entity"] if isinstance(data["Entity"], list) else [data["Entity"]]
+                
+                for entity in entities:
+                    test_data = self._extract_entity_fields(entity)
+                    if test_data and test_data.get("id"):
+                        test_data["sanitized_name"] = self.sanitize_name(test_data.get("name", ""))
+                        tests.append(test_data)
+                
+                # Add to results
+                all_tests.extend(tests)
+                
+                # Check if we need to fetch more
+                batch_count = len(tests)
+                self.logger.info(f"Fetched {batch_count} tests in batch starting at index {start_index}")
+                
+                if batch_count < page_size:
+                    # Last page, no more data
+                    break
+                
+                # Move to next batch
+                start_index += page_size
+            
+            self.logger.info(f"Fetched total {len(all_tests)} tests for folder: {folder_id}")
+            return all_tests
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching tests: {str(e)}", exc_info=True)
+            return []
+    
+    async def fetch_test_details(
+        self,
+        username: str,
+        domain: str,
+        project: str,
+        test_id: str
+    ) -> Dict[str, Any]:
+        """
+        Fetch detailed test information including design steps.
+        
+        Args:
+            username: ALM username
+            domain: Domain name
+            project: Project name
+            test_id: Test ID
+            
+        Returns:
+            Test details dictionary
+        """
+        try:
+            self.logger.info(f"Fetching test details for test: {test_id}")
+            
+            test_url = f"{self.base_url}{ALMConfig.get_endpoint('test-details', domain=domain, project=project, id=test_id)}"
+            
+            response = await self._api_call_with_retry(
+                "GET",
+                test_url,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json"
+                },
+                verify=False
+            )
+            
+            if response.status_code != 200:
+                self.logger.error(f"Failed to fetch test details: {response.status_code}")
+                return {}
+            
+            data = response.json()
+            test_details = self._extract_entity_fields(data)
+            
+            # Fetch design steps
+            design_steps_url = f"{self.base_url}{ALMConfig.get_endpoint('design-steps', domain=domain, project=project)}"
+            params = {"query": f"{{parent-id[{test_id}]}}"}
+            
+            steps_response = await self._api_call_with_retry(
+                "GET",
+                design_steps_url,
+                params=params,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json"
+                },
+                verify=False
+            )
+            
+            design_steps = []
+            if steps_response.status_code == 200:
+                steps_data = steps_response.json()
+                entities = []
+                
+                if isinstance(steps_data, dict):
+                    if "entities" in steps_data:
+                        entities = steps_data["entities"] if isinstance(steps_data["entities"], list) else [steps_data["entities"]]
+                
+                for entity in entities:
+                    step = self._extract_entity_fields(entity)
+                    design_steps.append(step)
+            
+            test_details["design_steps"] = design_steps
+            
+            return test_details
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching test details: {str(e)}", exc_info=True)
+            return {}
+    
+    async def fetch_attachments(
+        self,
+        username: str,
+        domain: str,
+        project: str,
+        parent_type: str,
+        parent_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch attachments for a test or folder.
+        Supports pagination - fetches all attachments in batches of 100.
+        
+        Args:
+            username: ALM username
+            domain: Domain name
+            project: Project name
+            parent_type: Type of parent (test, test-folder, etc.)
+            parent_id: Parent entity ID
+            
+        Returns:
+            List of all attachments
+        """
+        try:
+            self.logger.info(f"Fetching attachments for {parent_type}: {parent_id}")
+            
+            attachments_url = f"{self.base_url}{ALMConfig.get_endpoint('attachments', domain=domain, project=project)}"
+            
+            all_attachments = []
+            start_index = 1
+            page_size = 100
+            
+            while True:
+                params = {
+                    "query": f"{{parent-type[{parent_type}];parent-id[{parent_id}]}}",
+                    "start-index": start_index
+                }
+                
+                response = await self._api_call_with_retry(
+                    "GET",
+                    attachments_url,
+                    params=params,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json"
+                    },
+                    verify=False
+                )
+                
+                if response.status_code != 200:
+                    self.logger.debug(f"No attachments or error: {response.status_code}")
+                    break
+                
+                data = response.json()
+                attachments = []
+                entities = []
+                
+                if isinstance(data, dict):
+                    if "entities" in data:
+                        entities = data["entities"] if isinstance(data["entities"], list) else [data["entities"]]
+                    elif "Entity" in data:
+                        entities = data["Entity"] if isinstance(data["Entity"], list) else [data["Entity"]]
+                
+                for entity in entities:
+                    attachment = self._extract_entity_fields(entity)
+                    if attachment and attachment.get("name"):
+                        attachment["sanitized_name"] = self.sanitize_name(attachment.get("name", ""))
+                        attachments.append(attachment)
+                
+                # Add to results
+                all_attachments.extend(attachments)
+                
+                # Check if we need to fetch more
+                batch_count = len(attachments)
+                self.logger.info(f"Fetched {batch_count} attachments in batch starting at index {start_index}")
+                
+                if batch_count < page_size:
+                    # Last page, no more data
+                    break
+                
+                # Move to next batch
+                start_index += page_size
+            
+            self.logger.info(f"Fetched total {len(all_attachments)} attachments for {parent_type}: {parent_id}")
+            return all_attachments
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching attachments: {str(e)}", exc_info=True)
+            return []
+    
+    def _extract_entity_fields(self, entity: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract fields from any ALM entity.
+        
+        Args:
+            entity: ALM entity dict
+            
+        Returns:
+            Normalized dict with all fields
+        """
+        result = {}
+        
+        if "Fields" in entity:
+            fields_data = entity["Fields"]
+            
+            if isinstance(fields_data, dict) and "Field" in fields_data:
+                field_list = fields_data["Field"]
+                if not isinstance(field_list, list):
+                    field_list = [field_list]
+                
+                for field in field_list:
+                    name = field.get("Name", "")
+                    values_data = field.get("values", {})
+                    
+                    value = None
+                    if isinstance(values_data, dict):
+                        value_array = values_data.get("value", [])
+                        if isinstance(value_array, list) and len(value_array) > 0:
+                            value = value_array[0]
+                        elif not isinstance(value_array, list):
+                            value = value_array
+                    elif isinstance(values_data, list) and len(values_data) > 0:
+                        value = values_data[0].get("value")
+                    
+                    if name:
+                        result[name] = value
+            
+            elif isinstance(fields_data, list):
+                for field in fields_data:
+                    name = field.get("Name", "")
+                    values = field.get("values", [])
+                    
+                    value = None
+                    if isinstance(values, list) and len(values) > 0:
+                        if isinstance(values[0], dict):
+                            value = values[0].get("value")
+                        else:
+                            value = values[0]
+                    
+                    if name:
+                        result[name] = value
+        else:
+            result = dict(entity)
+        
+        return result
+    
+    def _extract_folder_fields(self, entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Extract relevant fields from ALM folder entity.
+        
+        ALM returns entities with nested Field structures:
+        {
+            "Type": "test-folder",
+            "Fields": {
+                "Field": [
+                    {"Name": "id", "values": {"value": ["123"]}},
+                    {"Name": "name", "values": {"value": ["Folder Name"]}},
+                    {"Name": "parent-id", "values": {"value": ["0"]}},
+                    ...
+                ]
+            }
+        }
+        
+        Or alternatively:
+        {
+            "Fields": [
+                {"Name": "id", "values": [{"value": "123"}]},
+                {"Name": "name", "values": [{"value": "Folder Name"}]},
+                ...
+            ]
+        }
+        
+        Args:
+            entity: ALM entity dict
+            
+        Returns:
+            Normalized folder dict
+        """
+        folder = {}
+        
+        # Handle ALM Field structure (nested)
+        if "Fields" in entity:
+            fields_data = entity["Fields"]
+            
+            # Check if Fields is a dict with Field array
+            if isinstance(fields_data, dict) and "Field" in fields_data:
+                field_list = fields_data["Field"]
+                if not isinstance(field_list, list):
+                    field_list = [field_list]
+                    
+                for field in field_list:
+                    name = field.get("Name", "")
+                    values_data = field.get("values", {})
+                    
+                    # Handle different value structures
+                    value = None
+                    if isinstance(values_data, dict):
+                        value_array = values_data.get("value", [])
+                        if isinstance(value_array, list) and len(value_array) > 0:
+                            value = value_array[0]
+                        elif not isinstance(value_array, list):
+                            value = value_array
+                    elif isinstance(values_data, list) and len(values_data) > 0:
+                        value = values_data[0].get("value")
+                    
+                    if name and value is not None:
+                        folder[name] = value
+            
+            # Check if Fields is directly a list
+            elif isinstance(fields_data, list):
+                for field in fields_data:
+                    name = field.get("Name", "")
+                    values = field.get("values", [])
+                    
+                    value = None
+                    if isinstance(values, list) and len(values) > 0:
+                        if isinstance(values[0], dict):
+                            value = values[0].get("value")
+                        else:
+                            value = values[0]
+                    
+                    if name and value is not None:
+                        folder[name] = value
+        else:
+            # Already flat structure
+            folder = dict(entity)
+        
+        # Ensure required fields exist
+        if "id" not in folder or "name" not in folder:
+            self.logger.warning(f"Folder missing required fields: {folder}")
+            return None
+        
+        # Normalize field names for consistency
+        normalized = {
+            "id": str(folder.get("id", "")),
+            "name": folder.get("name", ""),
+            "description": folder.get("description", ""),
+            "parent_id": folder.get("parent-id", "0"),  # ALM uses parent-id
+            "has_children": folder.get("has-attachments", "N") == "Y",  # Check if folder has children
+        }
+        
+        return normalized
+    
+    def _parse_entity_fields(self, entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Parse ALM entity fields structure into flat dict.
+        
+        ALM returns entities like:
+        {
+            "Type": "release",
+            "Fields": [
+                {"Name": "id", "values": [{"value": "1001"}]},
+                {"Name": "name", "values": [{"value": "Release 1.0"}]},
+                ...
+            ]
+        }
+        
+        Args:
+            entity: ALM entity dict
+            
+        Returns:
+            Flat dict with field name-value pairs
+        """
+        result = {}
+        
+        if "Fields" in entity:
+            fields = entity["Fields"]
+            
+            # Handle both list and dict structures
+            if isinstance(fields, dict) and "Field" in fields:
+                field_list = fields["Field"]
+                if not isinstance(field_list, list):
+                    field_list = [field_list]
+            elif isinstance(fields, list):
+                field_list = fields
+            else:
+                return None
+            
+            for field in field_list:
+                name = field.get("Name", "")
+                values = field.get("values", [])
+                
+                # Extract first value
+                value = None
+                if isinstance(values, list) and len(values) > 0:
+                    if isinstance(values[0], dict):
+                        value = values[0].get("value")
+                    else:
+                        value = values[0]
+                elif isinstance(values, dict) and "value" in values:
+                    val_list = values["value"]
+                    if isinstance(val_list, list) and len(val_list) > 0:
+                        value = val_list[0]
+                    else:
+                        value = val_list
+                
+                if name and value is not None:
+                    result[name] = str(value)
+        else:
+            # Already flat
+            result = dict(entity)
+        
+        return result if result else None
+    
+    async def fetch_entities(
+        self,
+        entity_type: str,
+        endpoint_key: str,
+        username: str,
+        domain: str = None,
+        project: str = None,
+        query_params: Dict[str, Any] = None,
+        **endpoint_params
+    ) -> Dict[str, Any]:
+        """
+        Generic method to fetch entities from ALM.
+        
+        Args:
+            entity_type: Type of entity (e.g., 'release', 'defect', 'test')
+            endpoint_key: Key to lookup endpoint in ALMConfig (e.g., 'releases', 'defects')
+            username: ALM username
+            domain: Domain name (optional)
+            project: Project name (optional)
+            query_params: Additional query parameters
+            **endpoint_params: Parameters to format the endpoint URL
+            
+        Returns:
+            Dict with 'entities' list and 'total' count
+        """
+        try:
+            # Build endpoint URL
+            endpoint = ALMConfig.get_endpoint(endpoint_key, domain=domain, project=project, **endpoint_params)
+            url = f"{self.base_url}{endpoint}"
+            
+            # Merge query parameters
+            params = query_params or {}
+            
+            # Fetch entities with pagination
+            all_entities = []
+            start_index = params.get("start-index", 1)
+            page_size = params.get("page-size", 100)
+            total_results = 0
+            
+            while True:
+                params["start-index"] = start_index
+                params["page-size"] = page_size
+                
+                response = await self._api_call_with_retry(
+                    "GET",
+                    url,
+                    params=params,
+                    headers={"Accept": "application/json"},
+                    verify=False
+                )
+                
+                if response.status_code != 200:
+                    self.logger.error(f"Failed to fetch {entity_type}: {response.status_code}")
+                    break
+                
+                data = response.json()
+                if isinstance(data, dict):
+                    total_results = data.get("TotalResults", 0)
+                    
+                    if "entities" in data:
+                        entities = data["entities"]
+                        if not isinstance(entities, list):
+                            entities = [entities]
+                        
+                        for entity in entities:
+                            parsed = self._parse_entity_fields(entity)
+                            if parsed:
+                                all_entities.append(parsed)
+                    
+                    # Check if more pages exist
+                    if len(all_entities) >= total_results:
+                        break
+                    
+                    start_index += page_size
+                else:
+                    break
+            
+            self.logger.info(f"Fetched {len(all_entities)} {entity_type}(s) (total: {total_results})")
+            return {"entities": all_entities, "total": total_results}
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching {entity_type}: {str(e)}", exc_info=True)
+            return {"entities": [], "total": 0}
+    
+    async def fetch_releases(
+        self,
+        username: str,
+        domain: str,
+        project: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch all releases from TestLab.
+        Supports pagination - fetches all releases in batches of 100.
+        
+        Args:
+            username: ALM username
+            domain: Domain name
+            project: Project name
+            
+        Returns:
+            List of all releases
+        """
+        try:
+            self.logger.info(f"Fetching releases for project: {project}")
+            
+            releases_url = f"{self.base_url}{ALMConfig.get_endpoint('releases', domain=domain, project=project)}"
+            
+            all_releases = []
+            start_index = 1
+            page_size = 100
+            
+            while True:
+                params = {
+                    "start-index": start_index,
+                    "page-size": page_size
+                }
+                
+                response = await self._api_call_with_retry(
+                    "GET",
+                    releases_url,
+                    params=params,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json"
+                    },
+                    verify=False
+                )
+                
+                if response.status_code != 200:
+                    self.logger.error(f"Failed to fetch releases: {response.status_code}")
+                    break
+                
+                data = response.json()
+                releases = []
+                
+                if isinstance(data, dict) and "entities" in data:
+                    entities = data["entities"]
+                    if not isinstance(entities, list):
+                        entities = [entities]
+                    
+                    for entity in entities:
+                        release = self._parse_entity_fields(entity)
+                        if release and "id" in release:
+                            all_releases.append(release)
+                            releases.append(release)
+                
+                # Check if we got fewer results than page_size
+                if len(releases) < page_size:
+                    break
+                
+                start_index += page_size
+            
+            self.logger.info(f"Fetched {len(all_releases)} releases")
+            return all_releases
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching releases: {str(e)}", exc_info=True)
+            return []
+    
+    async def fetch_release_cycles(
+        self,
+        username: str,
+        domain: str,
+        project: str,
+        release_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch release cycles for a specific release.
+        Supports pagination - fetches all cycles in batches of 100.
+        
+        Args:
+            username: ALM username
+            domain: Domain name
+            project: Project name
+            release_id: Release ID
+            
+        Returns:
+            List of all release cycles
+        """
+        try:
+            self.logger.info(f"Fetching release cycles for release: {release_id}")
+            
+            cycles_url = f"{self.base_url}{ALMConfig.get_endpoint('release-cycles', domain=domain, project=project)}"
+            
+            all_cycles = []
+            start_index = 1
+            page_size = 100
+            
+            while True:
+                params = {
+                    "query": f"{{parent-id[{release_id}]}}",
+                    "start-index": start_index,
+                    "page-size": page_size
+                }
+                
+                response = await self._api_call_with_retry(
+                    "GET",
+                    cycles_url,
+                    params=params,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json"
+                    },
+                    verify=False
+                )
+                
+                if response.status_code != 200:
+                    self.logger.debug(f"No cycles or error: {response.status_code}")
+                    break
+                
+                data = response.json()
+                cycles = []
+                
+                if isinstance(data, dict) and "entities" in data:
+                    entities = data["entities"]
+                    if not isinstance(entities, list):
+                        entities = [entities]
+                    
+                    for entity in entities:
+                        cycle = self._parse_entity_fields(entity)
+                        if cycle and "id" in cycle:
+                            all_cycles.append(cycle)
+                            cycles.append(cycle)
+                
+                # Check if we got fewer results than page_size
+                if len(cycles) < page_size:
+                    break
+                
+                start_index += page_size
+            
+            self.logger.info(f"Fetched {len(all_cycles)} release cycles")
+            return all_cycles
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching release cycles: {str(e)}", exc_info=True)
+            return []
+    
+    async def fetch_test_sets(
+        self,
+        username: str,
+        domain: str,
+        project: str,
+        cycle_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch test sets for a specific release cycle.
+        Supports pagination - fetches all test sets in batches of 100.
+        
+        Args:
+            username: ALM username
+            domain: Domain name
+            project: Project name
+            cycle_id: Release cycle ID
+            
+        Returns:
+            List of all test sets
+        """
+        try:
+            self.logger.info(f"Fetching test sets for cycle: {cycle_id}")
+            
+            test_sets_url = f"{self.base_url}{ALMConfig.get_endpoint('test-sets', domain=domain, project=project)}"
+            
+            all_test_sets = []
+            start_index = 1
+            page_size = 100
+            
+            while True:
+                params = {
+                    "query": f"{{parent-id[{cycle_id}]}}",
+                    "start-index": start_index,
+                    "page-size": page_size
+                }
+                
+                response = await self._api_call_with_retry(
+                    "GET",
+                    test_sets_url,
+                    params=params,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json"
+                    },
+                    verify=False
+                )
+                
+                if response.status_code != 200:
+                    self.logger.debug(f"No test sets or error: {response.status_code}")
+                    break
+                
+                data = response.json()
+                test_sets = []
+                
+                if isinstance(data, dict) and "entities" in data:
+                    entities = data["entities"]
+                    if not isinstance(entities, list):
+                        entities = [entities]
+                    
+                    for entity in entities:
+                        test_set = self._parse_entity_fields(entity)
+                        if test_set and "id" in test_set:
+                            all_test_sets.append(test_set)
+                            test_sets.append(test_set)
+                
+                # Check if we got fewer results than page_size
+                if len(test_sets) < page_size:
+                    break
+                
+                start_index += page_size
+            
+            self.logger.info(f"Fetched {len(all_test_sets)} test sets")
+            return all_test_sets
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching test sets: {str(e)}", exc_info=True)
+            return []
+    
+    async def fetch_test_runs(
+        self,
+        username: str,
+        domain: str,
+        project: str,
+        test_set_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch test runs for a specific test set.
+        Supports pagination - fetches all test runs in batches of 100.
+        
+        Args:
+            username: ALM username
+            domain: Domain name
+            project: Project name
+            test_set_id: Test set ID
+            
+        Returns:
+            List of all test runs
+        """
+        try:
+            self.logger.info(f"Fetching test runs for test set: {test_set_id}")
+            
+            runs_url = f"{self.base_url}{ALMConfig.get_endpoint('test-runs', domain=domain, project=project)}"
+            
+            all_runs = []
+            start_index = 1
+            page_size = 100
+            
+            while True:
+                params = {
+                    "query": f"{{testcycl-id[{test_set_id}]}}",
+                    "start-index": start_index,
+                    "page-size": page_size
+                }
+                
+                response = await self._api_call_with_retry(
+                    "GET",
+                    runs_url,
+                    params=params,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json"
+                    },
+                    verify=False
+                )
+                
+                if response.status_code != 200:
+                    self.logger.debug(f"No test runs or error: {response.status_code}")
+                    break
+                
+                data = response.json()
+                runs = []
+                
+                if isinstance(data, dict) and "entities" in data:
+                    entities = data["entities"]
+                    if not isinstance(entities, list):
+                        entities = [entities]
+                    
+                    for entity in entities:
+                        run = self._parse_entity_fields(entity)
+                        if run and "id" in run:
+                            all_runs.append(run)
+                            runs.append(run)
+                
+                # Check if we got fewer results than page_size
+                if len(runs) < page_size:
+                    break
+                
+                start_index += page_size
+            
+            self.logger.info(f"Fetched {len(all_runs)} test runs")
+            return all_runs
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching test runs: {str(e)}", exc_info=True)
+            return []
+    
+    async def fetch_run_details(
+        self,
+        username: str,
+        domain: str,
+        project: str,
+        run_id: str
+    ) -> Dict[str, Any]:
+        """
+        Fetch detailed information for a specific test run.
+        
+        Args:
+            username: ALM username
+            domain: Domain name
+            project: Project name
+            run_id: Test run ID
+            
+        Returns:
+            Dict with run details
+        """
+        try:
+            self.logger.info(f"Fetching details for run: {run_id}")
+            
+            # Note: Using /runs/{id} pattern - mock ALM supports this but real ALM may need query filter
+            run_url = f"{self.base_url}{ALMConfig.get_endpoint('test-runs', domain=domain, project=project)}/{run_id}"
+            
+            response = await self._api_call_with_retry(
+                "GET",
+                run_url,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json"
+                },
+                verify=False
+            )
+            
+            if response.status_code != 200:
+                self.logger.error(f"Failed to fetch run details: {response.status_code}")
+                return {}
+            
+            data = response.json()
+            
+            # Parse entity format
+            if isinstance(data, dict):
+                if "Fields" in data:
+                    run_data = self._parse_entity_fields(data)
+                elif "entities" in data:
+                    entities = data["entities"]
+                    if isinstance(entities, list) and len(entities) > 0:
+                        run_data = self._parse_entity_fields(entities[0])
+                    else:
+                        run_data = self._parse_entity_fields(entities)
+                else:
+                    run_data = data
+            else:
+                run_data = {}
+            
+            return run_data
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching run details: {str(e)}", exc_info=True)
+            return {}
+    
+    async def fetch_defects(
+        self,
+        username: str,
+        domain: str,
+        project: str,
+        start_index: int = 1,
+        page_size: int = 100,
+        query_filter: str = None
+    ) -> Dict[str, Any]:
+        """
+        Fetch defects with pagination support.
+        
+        Args:
+            username: ALM username
+            domain: Domain name
+            project: Project name
+            start_index: Starting index (1-based)
+            page_size: Number of defects to fetch
+            query_filter: Optional ALM query filter
+            
+        Returns:
+            Dict with defects list and total count
+        """
+        try:
+            self.logger.info(f"Fetching defects (start={start_index}, page_size={page_size})")
+            
+            # Use ALMConfig for endpoint
+            defects_url = f"{self.base_url}{ALMConfig.get_endpoint('defects', domain=domain, project=project)}"
+            
+            params = {
+                "start-index": start_index,
+                "page-size": page_size
+            }
+            
+            if query_filter:
+                params["query"] = query_filter
+            
+            response = await self._api_call_with_retry(
+                "GET",
+                defects_url,
+                params=params,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json"
+                },
+                verify=False
+            )
+            
+            if response.status_code != 200:
+                self.logger.error(f"Failed to fetch defects: {response.status_code}")
+                return {"defects": [], "total": 0}
+            
+            data = response.json()
+            defects = []
+            total_results = 0
+            
+            if isinstance(data, dict):
+                total_results = data.get("TotalResults", 0)
+                
+                if "entities" in data:
+                    entities = data["entities"]
+                    if not isinstance(entities, list):
+                        entities = [entities]
+                    
+                    for entity in entities:
+                        defect = self._parse_entity_fields(entity)
+                        if defect and "id" in defect:
+                            defects.append(defect)
+            
+            self.logger.info(f"Fetched {len(defects)} defects (total: {total_results})")
+            return {"defects": defects, "total": total_results}
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching defects: {str(e)}", exc_info=True)
+            return {"defects": [], "total": 0}
+    
+    async def fetch_defect_details(
+        self,
+        username: str,
+        domain: str,
+        project: str,
+        defect_id: str
+    ) -> Dict[str, Any]:
+        """
+        Fetch detailed information for a specific defect.
+        Uses /defects endpoint with id filter to get full defect data, then fetches attachments.
+        
+        Args:
+            username: ALM username
+            domain: Domain name
+            project: Project name
+            defect_id: Defect ID
+            
+        Returns:
+            Defect details dictionary with attachments
+        """
+        try:
+            self.logger.info(f"Fetching defect details: {defect_id}")
+            
+            # Use ALMConfig for endpoint - query by ID
+            defects_url = f"{self.base_url}{ALMConfig.get_endpoint('defects', domain=domain, project=project)}"
+            
+            # Query for specific defect by ID
+            params = {
+                "query": f"{{id[{defect_id}]}}",
+                "page-size": 1
+            }
+            
+            response = await self._api_call_with_retry(
+                "GET",
+                defects_url,
+                params=params,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json"
+                },
+                verify=False
+            )
+            
+            if response.status_code != 200:
+                self.logger.error(f"Failed to fetch defect details: {response.status_code}")
+                return {}
+            
+            data = response.json()
+            defect_details = {}
+            
+            # Parse the defect entity from response
+            if isinstance(data, dict) and "entities" in data:
+                entities = data["entities"]
+                if isinstance(entities, list) and len(entities) > 0:
+                    defect_details = self._parse_entity_fields(entities[0])
+                elif not isinstance(entities, list):
+                    defect_details = self._parse_entity_fields(entities)
+            
+            if not defect_details:
+                self.logger.warning(f"No defect found with ID: {defect_id}")
+                return {}
+            
+            # Fetch attachments for this defect using proper endpoint
+            attachments = await self.fetch_attachments(
+                username, domain, project, "defect", defect_id
+            )
+            
+            if attachments:
+                defect_details["attachments"] = attachments
+            
+            return defect_details
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching defect details: {str(e)}", exc_info=True)
+            return {}
+    
+    async def download_attachment(
+        self,
+        username: str,
+        domain: str,
+        project: str,
+        attachment_id: str
+    ) -> bytes:
+        """
+        Download attachment file content.
+        
+        Args:
+            username: ALM username
+            domain: Domain name
+            project: Project name
+            attachment_id: Attachment ID
+            
+        Returns:
+            File content as bytes
+        """
+        try:
+            self.logger.info(f"Downloading attachment: {attachment_id}")
+            
+            attachment_url = f"{self.base_url}{ALMConfig.get_endpoint('attachment-download', domain=domain, project=project, id=attachment_id)}"
+            
+            response = await self._api_call_with_retry(
+                "GET",
+                attachment_url,
+                headers={
+                    "Accept": "application/octet-stream"
+                },
+                verify=False
+            )
+            
+            if response.status_code != 200:
+                self.logger.error(f"Failed to download attachment: {response.status_code}")
+                return b""
+            
+            return response.content
+            
+        except Exception as e:
+            self.logger.error(f"Error downloading attachment: {str(e)}", exc_info=True)
+            return b""

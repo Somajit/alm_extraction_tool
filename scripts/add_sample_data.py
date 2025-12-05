@@ -1,5 +1,5 @@
 """
-Script to add sample data to MongoDB for ALM Extraction Tool
+Script to add sample data to MongoDB for ReleaseCraft
 Usage: python add_sample_data.py
 """
 import asyncio
@@ -126,9 +126,9 @@ async def add_test_trees(db):
     
     print("\nAdding test trees...")
     for tree_doc in trees:
-        existing = await db.tree.find_one({"project": tree_doc["project"], "type": tree_doc["type"]})
+        existing = await db.tree_cache.find_one({"project": tree_doc["project"], "type": tree_doc["type"]})
         if not existing:
-            await db.tree.insert_one(tree_doc)
+            await db.tree_cache.insert_one(tree_doc)
             print(f"  ✓ Created {tree_doc['type']} tree for {tree_doc['project']}")
         else:
             print(f"  - Tree already exists: {tree_doc['type']} for {tree_doc['project']}")
@@ -227,7 +227,7 @@ async def main():
         users_count = await db.users.count_documents({})
         domains_count = await db.domains.count_documents({})
         projects_count = await db.projects.count_documents({})
-        trees_count = await db.tree.count_documents({})
+        trees_count = await db.tree_cache.count_documents({})
         defects_count = await db.defects.count_documents({})
         
         print(f"Total users: {users_count}")

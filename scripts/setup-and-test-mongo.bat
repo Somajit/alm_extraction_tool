@@ -4,8 +4,8 @@ REM Usage: setup-and-test-mongo.bat
 
 setlocal enabledelayedexpansion
 
-set CONTAINER_NAME=alm_mongo
-set MONGO_URI=mongodb://localhost:27017/alm_db
+set CONTAINER_NAME=mongo
+set MONGO_URI=mongodb://localhost:27017/releasecraftdb
 set WORKSPACE_ROOT=%~dp0..
 
 echo.
@@ -30,7 +30,7 @@ echo.
 
 REM Step 2: Start new MongoDB container
 echo [STEP 2/3] Starting new MongoDB container...
-docker run -d --name %CONTAINER_NAME% -p 27017:27017 -e MONGO_INITDB_DATABASE=alm_db mongo:6.0
+docker run -d --name %CONTAINER_NAME% -p 27017:27017 -e MONGO_INITDB_DATABASE=releasecraftdb mongo:6.0
 if errorlevel 1 (
     echo [ERROR] Failed to start MongoDB container
     exit /b 1
@@ -40,8 +40,8 @@ echo [INFO] Waiting for MongoDB to initialize... (10 seconds)
 timeout /t 10 /nobreak
 echo.
 
-REM Step 3: Test connection and initialize data
-echo [STEP 3/3] Testing connection and initializing sample data...
+REM Step 3: Verify connection only (no data initialization)
+echo [STEP 3/3] Verifying MongoDB connection...
 
 REM Create .env.local file
 (
@@ -50,11 +50,14 @@ REM Create .env.local file
 ) > "%WORKSPACE_ROOT%\backend\.env.local"
 
 echo [INFO] Created .env.local
-echo [INFO] Running test and initialization script...
+echo [INFO] Testing MongoDB connection...
 echo.
 
-cd /d "%WORKSPACE_ROOT%"
-python scripts\test_atlas_connection.py
+REM Simple connection test
+docker exec %CONTAINER_NAME% mongosh releasecraftdb --quiet --eval "print('Connected to MongoDB successfully'); print('Database: ' + db.getName());"
+
+REM Simple connection test
+docker exec %CONTAINER_NAME% mongosh releasecraftdb --quiet --eval "print('Connected to MongoDB successfully'); print('Database: ' + db.getName());"
 
 if errorlevel 1 (
     echo.
@@ -67,16 +70,23 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo [SUCCESS] MongoDB connection verified
 echo.
+
+echo [SUCCESS] MongoDB connection verified
+echo.
+
 echo ============================================
 echo SUCCESS! MongoDB is ready
 echo ============================================
+echo.
+echo MongoDB is running with an empty database.
+echo Data will be created when you use the application.
 echo.
 echo Next steps:
 echo   1. Backend: cd backend ^&^& uvicorn app.main:app --reload
 echo   2. Frontend: cd frontend ^&^& npm run dev
 echo   3. Open: http://localhost:5173
-echo   4. Login: admin / admin123
 echo.
 echo To stop MongoDB:
 echo   docker stop %CONTAINER_NAME%

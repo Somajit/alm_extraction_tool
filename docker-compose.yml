@@ -1,34 +1,64 @@
-version: '3.8'
+name: releasecraft
+
 services:
   mongo:
     image: mongo:6.0
-    container_name: alm_mongo
+    container_name: mongo
     restart: unless-stopped
     ports:
       - '27017:27017'
+    environment:
+      - MONGO_INITDB_DATABASE=releasecraftdb
     volumes:
-      - mongo_data:/data/db
+      - ./mongodb_data:/data/db
+      - ./mongodb_config:/data/configdb
+    networks:
+      - releasecraft-network
+
+  mock-alm:
+    build: ./mock_alm
+    container_name: mock-alm
+    restart: unless-stopped
+    ports:
+      - '8001:8001'
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - releasecraft-network
 
   backend:
     build: ./backend
-    container_name: alm_backend
+    container_name: backend
     restart: unless-stopped
     ports:
       - '8000:8000'
     environment:
-      - MONGO_URI=mongodb://mongo:27017/alm_db
+      - MONGO_URI=mongodb://mongo:27017/releasecraftdb
       - CORS_ORIGINS=http://localhost:5173
+      - USE_MOCK_ALM=true
+      - MOCK_ALM_URL=http://mock-alm:8001
+      - ALM_URL=https://your-alm-server.com/qcbin
+      - ALM_ENCRYPTION_KEY=${ALM_ENCRYPTION_KEY:-}
+    env_file:
+      - ./backend/.env.local
     depends_on:
-      - mongo
+      - mock-alm
+    networks:
+      - releasecraft-network
 
   frontend:
     build: ./frontend
-    container_name: alm_frontend
+    container_name: frontend
     restart: unless-stopped
     ports:
       - '5173:80'
     depends_on:
       - backend
+    networks:
+      - releasecraft-network
 
+networks:
+  releasecraft-network:
+    driver: bridge
 volumes:
   mongo_data:

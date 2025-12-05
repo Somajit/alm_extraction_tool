@@ -11,15 +11,16 @@ For local development without using MongoDB Atlas cloud, you can run MongoDB in 
 2. Start MongoDB:
 ```powershell
 docker run -d `
-  --name alm_mongo `
+  --name mongo `
+  --network releasecraft_releasecraft-network `
   -p 27017:27017 `
   -e MONGO_INITDB_DATABASE=alm_db `
   mongo:6.0
 ```
 
 3. Verify it's running:
-```powershell
-docker ps | findstr alm_mongo
+docker ps | findstr mongo
+docker ps | findstr mongo
 ```
 
 4. Test connection:
@@ -88,8 +89,8 @@ Expected output:
 
 ### Stop Docker container:
 ```powershell
-docker stop alm_mongo
-docker rm alm_mongo
+docker stop mongo
+docker rm mongo
 ```
 
 ### Stop docker-compose:
@@ -110,7 +111,7 @@ Then open http://localhost:5173 (frontend) and http://localhost:8000/docs (backe
 ### Option B: Local Backend + Docker MongoDB
 ```powershell
 # Terminal 1: Start MongoDB
-docker run -d --name alm_mongo -p 27017:27017 mongo:6.0
+docker run -d --name mongo -p 27017:27017 --network releasecraft_releasecraft-network mongo:6.0
 
 # Terminal 2: Start backend
 cd backend
@@ -151,7 +152,8 @@ docker volume create mongo_data
 
 # Then run with volume
 docker run -d `
-  --name alm_mongo `
+  --name mongo `
+  --network releasecraft_releasecraft-network `
   -p 27017:27017 `
   -v mongo_data:/data/db `
   mongo:6.0
