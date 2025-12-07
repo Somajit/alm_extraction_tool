@@ -26,7 +26,12 @@ set START_MONGO_LOCAL=0
 
 REM Try to read MONGO_URI from backend/.env if it exists
 if exist "backend\.env" (
-    for /f "tokens=2 delims==" %%a in ('findstr /b "MONGO_URI=" backend\.env') do set EXISTING_MONGO_URI=%%a
+    REM Read the entire line and extract value after =, removing quotes if present
+    for /f "usebackq tokens=1,* delims==" %%a in (`findstr /b "MONGO_URI=" backend\.env`) do (
+        set "EXISTING_MONGO_URI=%%b"
+        REM Remove surrounding quotes if present
+        set EXISTING_MONGO_URI=!EXISTING_MONGO_URI:"=!
+    )
 )
 
 if "%MONGO_CHOICE%"=="1" (
@@ -226,24 +231,39 @@ if /i "%CLEAN_CHOICE%"=="y" (
 )
 echo.
 
-REM Step 4: Update backend .env with MongoDB URI and local URLs
+REM Step 4: Configure Backend
 echo Step 4: Configure Backend
 echo -------------------------
 echo.
-echo Updating backend/.env with MongoDB connection and local URLs
+
+REM Read USE_MOCK_ALM setting if it exists
+set USE_MOCK_ALM=true
+if exist "backend\.env" (
+    for /f "usebackq tokens=1,* delims==" %%a in (`findstr /b "USE_MOCK_ALM=" backend\.env`) do (
+        set "USE_MOCK_ALM=%%b"
+    )
+)
 
 if not exist "backend\.env" (
     echo Creating backend/.env file
     (
-        echo MONGO_URI=%MONGO_URI%
+        echo MONGO_URI=!MONGO_URI!
         echo ALM_BASE_URL=http://localhost:8001
         echo USE_MOCK_ALM=true
         echo CORS_ORIGINS=http://localhost:5173
         echo SECRET_KEY=your-secret-key-change-in-production
     ) > backend\.env
+    echo Backend configuration created.
 ) else (
-    echo Updating environment variables in backend/.env
-    powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^MONGO_URI=.*', 'MONGO_URI=%MONGO_URI%'; $content = $content -replace '^ALM_BASE_URL=.*', 'ALM_BASE_URL=http://localhost:8001'; $content | Set-Content backend\.env"
+    echo Updating MONGO_URI in backend/.env
+    powershell -Command "$content = Get-Content 'backend\.env' -Raw; $content = $content -replace '(?m)^MONGO_URI=.*$', 'MONGO_URI=!MONGO_URI!'; $content | Set-Content 'backend\.env' -NoNewline"
+    
+    REM Only update ALM_BASE_URL if USE_MOCK_ALM is true
+    if /i "!USE_MOCK_ALM!"=="true" (
+        echo USE_MOCK_ALM is enabled - will update ALM_BASE_URL for Mock ALM
+    ) else (
+        echo USE_MOCK_ALM is disabled - keeping existing ALM_BASE_URL
+    )
 )
 echo Backend configuration updated.
 echo.
@@ -299,9 +319,15 @@ if %errorLevel% equ 0 (
 echo Ports assigned: Mock ALM=%MOCK_ALM_PORT%, Backend=%BACKEND_PORT%, Frontend=%FRONTEND_PORT%
 echo.
 
-REM Update backend .env with actual ports
-powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^ALM_BASE_URL=.*', 'ALM_BASE_URL=http://localhost:%MOCK_ALM_PORT%'; $content = $content -replace '^CORS_ORIGINS=.*', 'CORS_ORIGINS=http://localhost:%FRONTEND_PORT%'; $content | Set-Content backend\.env"
-
+REM Update backend .env with actual ports, but only update ALM_BASE_URL if USE_MOCK_ALM=true
+if /i "!USE_MOCK_ALM!"=="true" (
+    powershell -Command "$content = Get-Content 'backend\.env' -Raw; $content = $content -replace '(?m)^ALM_BASE_URL=.*$', 'ALM_BASE_URL=http://localhost:%MOCK_ALM_PORT%'; $content = $content -replace '(?m)^CORS_ORIGINS=.*$', 'CORS_ORIGINS=http://localhost:%FRONTEND_PORT%'; $content | Set-Content 'backend\.env' -NoNewline"
+    echo Updated ALM_BASE_URL to http://localhost:%MOCK_ALM_PORT% (Mock ALM)
+) else (
+    powershell -Command "$content = Get-Content 'backend\.env' -Raw; $content = $content -replace '(?m)^CORS_ORIGINS=.*$', 'CORS_ORIGINS=http://localhost:%FRONTEND_PORT%'; $content | Set-Content 'backend\.env' -NoNewline"
+    echo Keeping existing ALM_BASE_URL (Mock ALM disabled)
+)
+echo.
 REM Initialize admin user in MongoDB
 echo Initializing admin user...
 cd backend
@@ -312,15 +338,22 @@ if %errorLevel% neq 0 (
 cd ..
 echo.
 
-REM Step 5: Start Mock ALM Server
-echo Step 5: Start Mock ALM Server
-echo ------------------------------
-echo.
-echo Starting Mock ALM server on http://localhost:%MOCK_ALM_PORT%
-start "Mock ALM Server" cmd /k "cd mock_alm && %PYTHON_CMD% main.py --port %MOCK_ALM_PORT%"
-timeout /t 3 /nobreak >nul
-echo Mock ALM server started.
-echo.
+REM Step 5: Start Mock ALM Server (only if USE_MOCK_ALM=true)
+if /i "!USE_MOCK_ALM!"=="true" (
+    echo Step 5: Start Mock ALM Server
+    echo ------------------------------
+    echo.
+    echo Starting Mock ALM server on http://localhost:%MOCK_ALM_PORT%
+    start "Mock ALM Server" cmd /k "cd mock_alm && %PYTHON_CMD% main.py --port %MOCK_ALM_PORT%"
+    timeout /t 3 /nobreak >nul
+    echo Mock ALM server started.
+    echo.
+) else (
+    echo Step 5: Mock ALM Server
+    echo ------------------------
+    echo Skipping Mock ALM (USE_MOCK_ALM=false)
+    echo.
+)
 
 REM Step 6: Start Backend Server
 echo Step 6: Start Backend Server

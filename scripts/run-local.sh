@@ -160,7 +160,8 @@ fi
 # Try to read existing MONGO_URI from backend/.env
 EXISTING_MONGO_URI=""
 if [ -f "backend/.env" ]; then
-    EXISTING_MONGO_URI=$(grep "^MONGO_URI=" backend/.env | cut -d '=' -f 2)
+    # Extract value after =, remove surrounding quotes if present
+    EXISTING_MONGO_URI=$(grep "^MONGO_URI=" backend/.env | cut -d '=' -f 2- | sed 's/^"//;s/"$//')
 fi
 
 MONGO_URI=""
@@ -351,16 +352,30 @@ else
 fi
 echo ""
 
-# Step 4: Update backend .env with all local URLs
+# Step 4: Configure Backend
 echo "Step 4: Configure Backend"
 echo "-------------------------"
 echo ""
-echo "Updating backend/.env with MongoDB connection and local URLs..."
+
+# Read USE_MOCK_ALM setting if it exists
+USE_MOCK_ALM="true"
+if [ -f "backend/.env" ]; then
+    USE_MOCK_ALM_LINE=$(grep "^USE_MOCK_ALM=" backend/.env | cut -d '=' -f 2)
+    if [ -n "$USE_MOCK_ALM_LINE" ]; then
+        USE_MOCK_ALM="$USE_MOCK_ALM_LINE"
+    fi
+fi
 
 if [ -f "backend/.env" ]; then
     # Update existing .env file
-    sed -i "s|^MONGO_URI=.*|MONGO_URI=$MONGO_URI|" backend/.env
-    sed -i "s|^ALM_BASE_URL=.*|ALM_BASE_URL=http://localhost:8001|" backend/.env
+    sed -i.bak "s|^MONGO_URI=.*|MONGO_URI=$MONGO_URI|" backend/.env
+    
+    # Only update ALM_BASE_URL if USE_MOCK_ALM is true
+    if [ "$USE_MOCK_ALM" = "true" ]; then
+        echo "USE_MOCK_ALM is enabled - will update ALM_BASE_URL for Mock ALM"
+    else
+        echo "USE_MOCK_ALM is disabled - keeping existing ALM_BASE_URL"
+    fi
 else
     # Create new .env file
     cat > backend/.env <<EOF
@@ -382,9 +397,15 @@ FRONTEND_PORT=$(find_available_port 5173)
 echo "Ports assigned: Mock ALM=$MOCK_ALM_PORT, Backend=$BACKEND_PORT, Frontend=$FRONTEND_PORT"
 echo ""
 
-# Update backend .env with actual ports
-sed -i "s|^ALM_URL=.*|ALM_URL=http://localhost:$MOCK_ALM_PORT|" backend/.env
-sed -i "s|^CORS_ORIGINS=.*|CORS_ORIGINS=http://localhost:$FRONTEND_PORT|" backend/.env
+# Update backend .env with actual ports, but only update ALM_BASE_URL if USE_MOCK_ALM=true
+if [ "$USE_MOCK_ALM" = "true" ]; then
+    sed -i "s|^ALM_BASE_URL=.*|ALM_BASE_URL=http://localhost:$MOCK_ALM_PORT|" backend/.env 2>/dev/null || sed -i "" "s|^ALM_BASE_URL=.*|ALM_BASE_URL=http://localhost:$MOCK_ALM_PORT|" backend/.env
+    sed -i "s|^CORS_ORIGINS=.*|CORS_ORIGINS=http://localhost:$FRONTEND_PORT|" backend/.env 2>/dev/null || sed -i "" "s|^CORS_ORIGINS=.*|CORS_ORIGINS=http://localhost:$FRONTEND_PORT|" backend/.env
+    echo "Updated ALM_BASE_URL to http://localhost:$MOCK_ALM_PORT (Mock ALM)"
+else
+    sed -i "s|^CORS_ORIGINS=.*|CORS_ORIGINS=http://localhost:$FRONTEND_PORT|" backend/.env 2>/dev/null || sed -i "" "s|^CORS_ORIGINS=.*|CORS_ORIGINS=http://localhost:$FRONTEND_PORT|" backend/.env
+    echo "Keeping existing ALM_BASE_URL (Mock ALM disabled)"
+fi
 
 # Initialize admin user in MongoDB
 echo "Initializing admin user..."
@@ -396,19 +417,27 @@ fi
 cd ..
 echo ""
 
-# Step 5: Start Mock ALM Server
-echo "Step 5: Start Mock ALM Server"
-echo "------------------------------"
-echo ""
-echo "Starting Mock ALM server on http://localhost:$MOCK_ALM_PORT..."
-cd mock_alm
-$PYTHON_CMD main.py --port $MOCK_ALM_PORT > ../logs/mock-alm.log 2>&1 &
-MOCK_ALM_PID=$!
-echo $MOCK_ALM_PID > ../logs/mock-alm.pid
-cd ..
-sleep 2
-echo -e "${GREEN}Mock ALM server started (PID: $MOCK_ALM_PID)${NC}"
-echo ""
+# Step 5: Start Mock ALM Server (only if USE_MOCK_ALM=true)
+if [ "$USE_MOCK_ALM" = "true" ]; then
+    echo "Step 5: Start Mock ALM Server"
+    echo "------------------------------"
+    echo ""
+    echo "Starting Mock ALM server on http://localhost:$MOCK_ALM_PORT..."
+    cd mock_alm
+    $PYTHON_CMD main.py --port $MOCK_ALM_PORT > ../logs/mock-alm.log 2>&1 &
+    MOCK_ALM_PID=$!
+    echo $MOCK_ALM_PID > ../logs/mock-alm.pid
+    cd ..
+    sleep 2
+    echo -e "${GREEN}Mock ALM server started (PID: $MOCK_ALM_PID)${NC}"
+    echo ""
+else
+    echo "Step 5: Mock ALM Server"
+    echo "------------------------"
+    echo "Skipping Mock ALM (USE_MOCK_ALM=false)"
+    echo ""
+    MOCK_ALM_PID="N/A"
+fi
 
 # Step 6: Start Backend Server
 echo "Step 6: Start Backend Server"
