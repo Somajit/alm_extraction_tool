@@ -100,8 +100,29 @@ echo.
 REM Only check localhost MongoDB for options 1 and 2
 if %MONGO_CHOICE% equ 1 goto check_local_mongo
 if %MONGO_CHOICE% equ 2 goto check_local_mongo
-REM For options 3 and 4 (Atlas/Custom), skip local MongoDB check
-echo Using remote MongoDB connection: !MONGO_URI!
+
+REM For options 3 and 4 (Atlas/Custom), test remote MongoDB connection
+echo Using remote MongoDB connection
+echo Connection: !MONGO_URI!
+echo.
+
+REM Extract database name from MONGO_URI
+for /f "tokens=4 delims=/?" %%a in ("!MONGO_URI!") do set DB_NAME=%%a
+if "!DB_NAME!"=="" set DB_NAME=test
+echo Database: !DB_NAME!
+echo.
+
+echo Testing MongoDB connection...
+%PYTHON_CMD% -c "from pymongo import MongoClient; import sys; client = MongoClient('!MONGO_URI!', serverSelectionTimeoutMS=5000); client.server_info(); print('Connected to MongoDB successfully'); sys.exit(0)" 2>nul
+if %errorLevel% equ 0 (
+    echo MongoDB connection verified successfully!
+    echo.
+    echo Fetching collection statistics...
+    %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient('!MONGO_URI!'); db = client.get_database(); collections = db.list_collection_names(); print('\nCollections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')" 2>nul
+) else (
+    echo Warning: Could not verify MongoDB connection
+    echo Continuing anyway... Connection will be tested when starting services.
+)
 goto mongo_connected
 
 :check_local_mongo
@@ -114,6 +135,9 @@ set MONGO_STATUS=%errorLevel%
 
 if %MONGO_STATUS% equ 0 (
     echo MongoDB connection verified successfully!
+    echo.
+    echo Fetching collection statistics...
+    %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient('!MONGO_URI!'); db = client.get_database(); collections = db.list_collection_names(); print('\nCollections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')" 2>nul
     goto mongo_connected
 )
 

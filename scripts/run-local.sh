@@ -244,6 +244,9 @@ if [ "$MONGO_CHOICE" = "1" ] || [ "$MONGO_CHOICE" = "2" ]; then
     if timeout 2 bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
         echo -e "${GREEN}✓ Connected to MongoDB successfully on localhost:27017${NC}"
         echo "Database: $DB_NAME"
+        echo ""
+        echo "Fetching collection statistics..."
+        $PYTHON_CMD -c "from pymongo import MongoClient; client = MongoClient('$MONGO_URI'); db = client.get_database(); collections = db.list_collection_names(); print('\nCollections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')" 2>/dev/null
     else
         echo -e "${YELLOW}MongoDB is not running on localhost:27017${NC}"
         
@@ -304,6 +307,9 @@ else
     $PYTHON_CMD -c "from pymongo import MongoClient; import sys; client = MongoClient('$MONGO_URI', serverSelectionTimeoutMS=5000); client.server_info(); print('✓ Connection successful'); sys.exit(0)" 2>/dev/null
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ MongoDB connection verified${NC}"
+        echo ""
+        echo "Fetching collection statistics..."
+        $PYTHON_CMD -c "from pymongo import MongoClient; client = MongoClient('$MONGO_URI'); db = client.get_database(); collections = db.list_collection_names(); print('\nCollections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')" 2>/dev/null
     else
         echo -e "${YELLOW}⚠ Warning: Could not verify MongoDB connection${NC}"
         echo "Continuing anyway... Connection will be tested when starting services."

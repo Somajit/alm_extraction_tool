@@ -31,13 +31,22 @@ logger.info('Backend service starting...')
 env_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
-MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/almdb')
+MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/almdb').strip()
 DEFAULT_ORIGINS = [os.environ.get('CORS_ORIGINS', 'http://localhost:5173')]
 ALM_ENCRYPTION_KEY = os.environ.get('ALM_ENCRYPTION_KEY', '')
 
-client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
-db = client.get_default_database()
-attachments_collection = db['attachment_cache']
+# Validate and log MongoDB URI
+logger.info(f"Connecting to MongoDB: {MONGO_URI.split('@')[-1] if '@' in MONGO_URI else MONGO_URI}")
+
+try:
+    client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
+    db = client.get_default_database()
+    attachments_collection = db['attachment_cache']
+    logger.info("MongoDB client initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize MongoDB client: {e}")
+    logger.error(f"MONGO_URI format: {MONGO_URI[:20]}...")
+    raise
 
 # Get encryption key
 encryption_key = os.environ.get('ALM_ENCRYPTION_KEY', '')
