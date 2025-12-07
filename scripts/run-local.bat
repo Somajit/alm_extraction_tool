@@ -179,6 +179,24 @@ if not exist "backend\.env" (
 echo Backend configuration updated.
 echo.
 
+REM Detect Python executable
+set PYTHON_CMD=python
+if exist "%USERPROFILE%\pyenv\Scripts\python.exe" (
+    set PYTHON_CMD=%USERPROFILE%\pyenv\Scripts\python.exe
+    echo Using Python from: %USERPROFILE%\pyenv\Scripts\python.exe
+) else (
+    where python >nul 2>&1
+    if %errorLevel% equ 0 (
+        set PYTHON_CMD=python
+        echo Using system Python
+    ) else (
+        echo ERROR: Python not found. Please install Python or configure pyenv.
+        pause
+        exit /b 1
+    )
+)
+echo.
+
 REM Find available ports
 echo Finding available ports...
 set MOCK_ALM_PORT=8001
@@ -220,7 +238,7 @@ echo Step 5: Start Mock ALM Server
 echo ------------------------------
 echo.
 echo Starting Mock ALM server on http://localhost:%MOCK_ALM_PORT%
-start "Mock ALM Server" cmd /k "cd mock_alm && %USERPROFILE%\pyenv\Scripts\python.exe main.py --port %MOCK_ALM_PORT%"
+start "Mock ALM Server" cmd /k "cd mock_alm && %PYTHON_CMD% main.py --port %MOCK_ALM_PORT%"
 timeout /t 3 /nobreak >nul
 echo Mock ALM server started.
 echo.
@@ -230,7 +248,7 @@ echo Step 6: Start Backend Server
 echo -----------------------------
 echo.
 echo Starting Backend server on http://localhost:%BACKEND_PORT%
-start "Backend Server" cmd /k "cd backend && %USERPROFILE%\pyenv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port %BACKEND_PORT% --reload"
+start "Backend Server" cmd /k "cd backend && %PYTHON_CMD% -m uvicorn app.main:app --host 0.0.0.0 --port %BACKEND_PORT% --reload"
 timeout /t 5 /nobreak >nul
 echo Backend server started.
 echo.
