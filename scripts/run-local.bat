@@ -98,20 +98,65 @@ set START_MONGO_LOCAL=1
 echo.
 
 REM Detect Python executable early (needed for MongoDB tests)
-set PYTHON_CMD=python
+set PYTHON_CMD=
 if exist "%USERPROFILE%\pyenv\Scripts\python.exe" (
     set PYTHON_CMD=%USERPROFILE%\pyenv\Scripts\python.exe
     echo Using Python from: %USERPROFILE%\pyenv\Scripts\python.exe
-) else (
-    where python >nul 2>&1
-    if %errorLevel% equ 0 (
-        set PYTHON_CMD=python
-        echo Using system Python
+    goto python_found
+)
+
+REM Try python3 command
+python3 --version >nul 2>&1
+if %errorLevel% equ 0 (
+    set PYTHON_CMD=python3
+    echo Using python3
+    goto python_found
+)
+
+REM Try python command
+python --version >nul 2>&1
+if %errorLevel% equ 0 (
+    set PYTHON_CMD=python
+    echo Using python
+    goto python_found
+)
+
+REM Try py launcher
+py --version >nul 2>&1
+if %errorLevel% equ 0 (
+    set PYTHON_CMD=py
+    echo Using py launcher
+    goto python_found
+)
+
+echo WARNING: Python not found in PATH
+echo MongoDB connection test will be skipped
+echo Please ensure Python is installed and added to PATH
+set PYTHON_CMD=python
+echo.
+
+:python_found
+echo.
+
+REM Check if pymongo is installed
+echo Checking for pymongo...
+%PYTHON_CMD% -c "import pymongo" >nul 2>&1
+if %errorLevel% neq 0 (
+    echo WARNING: pymongo module not found
+    echo Installing pymongo...
+    %PYTHON_CMD% -m pip install pymongo >nul 2>&1
+    if %errorLevel% neq 0 (
+        echo Failed to install pymongo automatically
+        echo Please install it manually: %PYTHON_CMD% -m pip install pymongo
+        echo Skipping MongoDB connection test...
+        set SKIP_MONGO_TEST=1
     ) else (
-        echo ERROR: Python not found. Please install Python or configure pyenv.
-        pause
-        exit /b 1
+        echo pymongo installed successfully
+        set SKIP_MONGO_TEST=0
     )
+) else (
+    echo pymongo found
+    set SKIP_MONGO_TEST=0
 )
 echo.
 
@@ -139,6 +184,12 @@ echo Database: !DB_NAME!
 echo.
 
 echo Testing MongoDB connection...
+if %SKIP_MONGO_TEST% equ 1 (
+    echo Skipping connection test - pymongo not available
+    echo Connection will be tested when starting services.
+    goto mongo_connected
+)
+
 %PYTHON_CMD% -c "from pymongo import MongoClient; import sys; client = MongoClient('''!MONGO_URI!''', serverSelectionTimeoutMS=5000); client.server_info(); print('Connected to MongoDB successfully'); sys.exit(0)"
 if %errorLevel% equ 0 (
     echo MongoDB connection verified successfully!
@@ -148,8 +199,6 @@ if %errorLevel% equ 0 (
 ) else (
     echo Warning: Could not verify MongoDB connection
     echo Please check: 1) MongoDB URI is correct, 2) Network connectivity, 3) MongoDB credentials
-    echo Continuing anyway... Connection will be tested when starting services.
-    echo Warning: Could not verify MongoDB connection
     echo Continuing anyway... Connection will be tested when starting services.
 )
 goto mongo_connected
