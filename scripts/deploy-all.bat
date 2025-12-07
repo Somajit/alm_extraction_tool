@@ -47,7 +47,7 @@ echo.
 echo Configuring MongoDB connection...
 if "!USE_LOCAL_MONGO!"=="true" (
     (
-        echo MONGO_URI=mongodb://localhost:27017/releasecraftdb
+        echo MONGO_URI=mongodb://localhost:27017/almdb
         echo CORS_ORIGINS=http://localhost:5173
     ) > "%WORKSPACE_ROOT%\backend\.env.local"
     echo [INFO] Configured for Local MongoDB
@@ -85,7 +85,7 @@ if not "!SKIP_CLEANUP!"=="true" (
         echo.
         echo Cleaning MongoDB data...
         if "!USE_LOCAL_MONGO!"=="true" (
-            docker exec mongo mongosh releasecraftdb --quiet --eval "db.getCollectionNames().forEach(function(col) { print('Dropping: ' + col); db[col].drop(); });"
+            docker exec mongo mongosh almdb --quiet --eval "db.getCollectionNames().forEach(function(col) { print('Dropping: ' + col); db[col].drop(); });"
         ) else (
             mongosh "!ATLAS_URI!" --quiet --eval "db.getCollectionNames().forEach(function(col) { print('Dropping: ' + col); db[col].drop(); });"
         )
@@ -182,9 +182,9 @@ echo =============================================
 echo.
 echo Services:
 if "!USE_LOCAL_MONGO!"=="true" (
-    echo   - MongoDB: localhost:27017 ^(database: releasecraftdb^)
+    echo   - MongoDB: localhost:27017 ^(database: almdb^)
 ) else (
-    echo   - MongoDB: Atlas Cloud ^(releasecraftdb^)
+    echo   - MongoDB: Atlas Cloud ^(almdb^)
 )
 echo   - Mock ALM: http://localhost:8001
 echo   - Backend: http://localhost:8000

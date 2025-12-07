@@ -167,14 +167,13 @@ if not exist "backend\.env" (
     (
         echo MONGO_URI=%MONGO_URI%
         echo ALM_URL=http://localhost:8001
-        echo MOCK_ALM_URL=http://localhost:8001
         echo USE_MOCK_ALM=true
         echo CORS_ORIGINS=http://localhost:5173
         echo SECRET_KEY=your-secret-key-change-in-production
     ) > backend\.env
 ) else (
     echo Updating environment variables in backend/.env
-    powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^MONGO_URI=.*', 'MONGO_URI=%MONGO_URI%'; $content = $content -replace '^ALM_URL=.*', 'ALM_URL=http://localhost:8001'; $content = $content -replace '^MOCK_ALM_URL=.*', 'MOCK_ALM_URL=http://localhost:8001'; if ($content -notmatch 'MOCK_ALM_URL=') { $content += \"`nMOCK_ALM_URL=http://localhost:8001\" }; $content | Set-Content backend\.env"
+    powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^MONGO_URI=.*', 'MONGO_URI=%MONGO_URI%'; $content = $content -replace '^ALM_URL=.*', 'ALM_URL=http://localhost:8001'; $content | Set-Content backend\.env"
 )
 echo Backend configuration updated.
 echo.
@@ -231,7 +230,17 @@ echo Ports assigned: Mock ALM=%MOCK_ALM_PORT%, Backend=%BACKEND_PORT%, Frontend=
 echo.
 
 REM Update backend .env with actual ports
-powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^ALM_URL=.*', 'ALM_URL=http://localhost:%MOCK_ALM_PORT%'; $content = $content -replace '^MOCK_ALM_URL=.*', 'MOCK_ALM_URL=http://localhost:%MOCK_ALM_PORT%'; $content = $content -replace '^CORS_ORIGINS=.*', 'CORS_ORIGINS=http://localhost:%FRONTEND_PORT%'; $content | Set-Content backend\.env"
+powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^ALM_URL=.*', 'ALM_URL=http://localhost:%MOCK_ALM_PORT%'; $content = $content -replace '^CORS_ORIGINS=.*', 'CORS_ORIGINS=http://localhost:%FRONTEND_PORT%'; $content | Set-Content backend\.env"
+
+REM Initialize admin user in MongoDB
+echo Initializing admin user...
+cd backend
+%PYTHON_CMD% init_admin.py
+if %errorLevel% neq 0 (
+    echo Warning: Failed to initialize admin user
+)
+cd ..
+echo.
 
 REM Step 5: Start Mock ALM Server
 echo Step 5: Start Mock ALM Server

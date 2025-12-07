@@ -8,7 +8,7 @@ Write-Host "========================================`n" -ForegroundColor Cyan
 # Update backend/.env for Docker deployment
 Write-Host "[1/6] Updating backend/.env for Docker..." -ForegroundColor Yellow
 $envContent = @"
-MONGO_URI=mongodb://mongodb:27017/releasecraftdb
+MONGO_URI=mongodb://mongodb:27017/almdb
 CORS_ORIGINS=http://localhost:5173
 ALM_URL=http://mock-alm:8001
 MOCK_ALM_URL=http://mock-alm:8001

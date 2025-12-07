@@ -31,7 +31,7 @@ logger.info('Backend service starting...')
 env_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
-MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/releasecraftdb')
+MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/almdb')
 DEFAULT_ORIGINS = [os.environ.get('CORS_ORIGINS', 'http://localhost:5173')]
 ALM_BASE_URL = os.environ.get('ALM_BASE_URL', 'https://alm.company.com/qcbin')
 ALM_ENCRYPTION_KEY = os.environ.get('ALM_ENCRYPTION_KEY', '')
@@ -150,17 +150,38 @@ async def cache_attachments(
 async def api_authenticate(request: AuthenticateRequest):
     """
     Authenticate with ALM server (username/password only).
+    For admin users, verify against stored password in MongoDB without ALM authentication.
     
     Flow:
-    1. Call ALM authentication endpoints
-    2. Store cookies in ALM client
-    3. Store encrypted credentials in MongoDB
-    4. Query credentials from MongoDB
-    5. Return data from MongoDB
+    1. Check if user is admin
+    2. If admin: Verify password against MongoDB, skip ALM authentication
+    3. If regular user: Call ALM authentication endpoints
+    4. Store/query credentials from MongoDB
+    5. Return authentication result
     """
     try:
+        # Check if this is an admin user
+        admin_user = await db.users.find_one({"username": request.username, "role": "admin"})
+        
+        if admin_user:
+            # Admin authentication - verify against stored password
+            stored_password = admin_user.get("password", "")
+            if stored_password == request.password:
+                logger.info(f"Admin user {request.username} authenticated successfully")
+                return {
+                    "success": True,
+                    "message": "Admin authentication successful",
+                    "username": request.username
+                }
+            else:
+                logger.warning(f"Admin authentication failed for {request.username}")
+                raise HTTPException(status_code=401, detail="Invalid admin credentials")
+        
+        # Regular user - authenticate with ALM
         result = await alm_client.authenticate(request.username, request.password)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

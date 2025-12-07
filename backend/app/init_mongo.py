@@ -15,7 +15,7 @@ from pathlib import Path
 env_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
-MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/releasecraftdb')
+MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/almdb')
 
 # Collection names
 COLLECTIONS = [

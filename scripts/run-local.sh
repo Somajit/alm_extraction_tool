@@ -161,13 +161,13 @@ MONGO_URI=""
 START_MONGO_LOCAL=0
 case $MONGO_CHOICE in
     1)
-        MONGO_URI="mongodb://localhost:27017/releasecraftdb"
+        MONGO_URI="mongodb://localhost:27017/almdb"
         START_MONGO_LOCAL=1
         echo "Selected: Local MongoDB (workspace/mongodb)"
         echo "Note: Will attempt to start MongoDB if not running"
         ;;
     2)
-        MONGO_URI="mongodb://localhost:27017/releasecraftdb"
+        MONGO_URI="mongodb://localhost:27017/almdb"
         echo "Selected: Docker MongoDB (localhost:27017)"
         echo "Note: Make sure Docker MongoDB container is running"
         ;;
@@ -181,7 +181,7 @@ case $MONGO_CHOICE in
         ;;
     *)
         echo "Invalid choice. Defaulting to Local MongoDB."
-        MONGO_URI="mongodb://localhost:27017/releasecraftdb"
+        MONGO_URI="mongodb://localhost:27017/almdb"
         ;;
 esac
 echo ""
@@ -197,7 +197,7 @@ if [ "$MONGO_CHOICE" = "1" ] || [ "$MONGO_CHOICE" = "2" ]; then
     
     if timeout 2 bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
         echo -e "${GREEN}✓ Connected to MongoDB successfully on localhost:27017${NC}"
-        echo "Database: releasecraftdb"
+        echo "Database: almdb"
     else
         echo -e "${YELLOW}MongoDB is not running on localhost:27017${NC}"
         
@@ -257,7 +257,7 @@ read -p "Do you want to clean the MongoDB database? (y/n): " CLEAN_CHOICE
 
 if [[ "$CLEAN_CHOICE" =~ ^[Yy]$ ]]; then
     echo ""
-    echo -e "${YELLOW}WARNING: This will delete ALL data from the releasecraftdb database!${NC}"
+    echo -e "${YELLOW}WARNING: This will delete ALL data from the almdb database!${NC}"
     read -p "Are you sure? Type YES to confirm: " CONFIRM
     
     if [ "$CONFIRM" = "YES" ]; then
@@ -288,18 +288,11 @@ if [ -f "backend/.env" ]; then
     # Update existing .env file
     sed -i "s|^MONGO_URI=.*|MONGO_URI=$MONGO_URI|" backend/.env
     sed -i "s|^ALM_URL=.*|ALM_URL=http://localhost:8001|" backend/.env
-    sed -i "s|^MOCK_ALM_URL=.*|MOCK_ALM_URL=http://localhost:8001|" backend/.env
-    
-    # Add MOCK_ALM_URL if it doesn't exist
-    if ! grep -q "^MOCK_ALM_URL=" backend/.env; then
-        echo "MOCK_ALM_URL=http://localhost:8001" >> backend/.env
-    fi
 else
     # Create new .env file
     cat > backend/.env <<EOF
 MONGO_URI=$MONGO_URI
 ALM_URL=http://localhost:8001
-MOCK_ALM_URL=http://localhost:8001
 USE_MOCK_ALM=true
 CORS_ORIGINS=http://localhost:5173
 SECRET_KEY=your-secret-key-change-in-production
@@ -318,8 +311,17 @@ echo ""
 
 # Update backend .env with actual ports
 sed -i "s|^ALM_URL=.*|ALM_URL=http://localhost:$MOCK_ALM_PORT|" backend/.env
-sed -i "s|^MOCK_ALM_URL=.*|MOCK_ALM_URL=http://localhost:$MOCK_ALM_PORT|" backend/.env
 sed -i "s|^CORS_ORIGINS=.*|CORS_ORIGINS=http://localhost:$FRONTEND_PORT|" backend/.env
+
+# Initialize admin user in MongoDB
+echo "Initializing admin user..."
+cd backend
+$PYTHON_CMD init_admin.py
+if [ $? -ne 0 ]; then
+    echo "Warning: Failed to initialize admin user"
+fi
+cd ..
+echo ""
 
 # Step 5: Start Mock ALM Server
 echo "Step 5: Start Mock ALM Server"

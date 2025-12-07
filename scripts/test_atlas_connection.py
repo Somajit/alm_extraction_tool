@@ -27,7 +27,7 @@ for env_name in [".env.local", ".env.atlas"]:
                     os.environ[key.strip()] = value.strip()
         break
 
-MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/releasecraftdb')
+MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/almdb')
 
 async def test_connection():
     """Test Atlas connection and initialize sample data."""

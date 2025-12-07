@@ -5,7 +5,7 @@ REM Usage: setup-and-test-mongo.bat
 setlocal enabledelayedexpansion
 
 set CONTAINER_NAME=mongo
-set MONGO_URI=mongodb://localhost:27017/releasecraftdb
+set MONGO_URI=mongodb://localhost:27017/almdb
 set WORKSPACE_ROOT=%~dp0..
 
 echo.
@@ -30,7 +30,7 @@ echo.
 
 REM Step 2: Start new MongoDB container
 echo [STEP 2/3] Starting new MongoDB container...
-docker run -d --name %CONTAINER_NAME% -p 27017:27017 -e MONGO_INITDB_DATABASE=releasecraftdb mongo:6.0
+docker run -d --name %CONTAINER_NAME% -p 27017:27017 -e MONGO_INITDB_DATABASE=almdb mongo:6.0
 if errorlevel 1 (
     echo [ERROR] Failed to start MongoDB container
     exit /b 1
@@ -54,10 +54,10 @@ echo [INFO] Testing MongoDB connection...
 echo.
 
 REM Simple connection test
-docker exec %CONTAINER_NAME% mongosh releasecraftdb --quiet --eval "print('Connected to MongoDB successfully'); print('Database: ' + db.getName());"
+docker exec %CONTAINER_NAME% mongosh almdb --quiet --eval "print('Connected to MongoDB successfully'); print('Database: ' + db.getName());"
 
 REM Simple connection test
-docker exec %CONTAINER_NAME% mongosh releasecraftdb --quiet --eval "print('Connected to MongoDB successfully'); print('Database: ' + db.getName());"
+docker exec %CONTAINER_NAME% mongosh almdb --quiet --eval "print('Connected to MongoDB successfully'); print('Database: ' + db.getName());"
 
 if errorlevel 1 (
     echo.
