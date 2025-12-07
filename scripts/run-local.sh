@@ -236,8 +236,8 @@ echo ""
 if [ "$MONGO_CHOICE" = "1" ] || [ "$MONGO_CHOICE" = "2" ]; then
     echo "Checking if MongoDB is running on localhost:27017..."
     
-    # Extract database name from MONGO_URI
-    DB_NAME=$(echo $MONGO_URI | awk -F'/' '{print $NF}')
+    # Extract database name from MONGO_URI (handle query parameters like ?authSource=dbname)
+    DB_NAME=$(echo $MONGO_URI | awk -F'/' '{print $NF}' | cut -d'?' -f1)
     if [ -z "$DB_NAME" ]; then
         DB_NAME="almdb"
     fi

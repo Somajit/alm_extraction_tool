@@ -112,8 +112,11 @@ echo Connection: !MONGO_URI!
 echo.
 
 REM Extract database name from MONGO_URI
-for /f "tokens=4 delims=/?" %%a in ("!MONGO_URI!") do set DB_NAME=%%a
-if "!DB_NAME!"=="" set DB_NAME=test
+REM Handle URIs like: mongodb://user:pass@host:port/dbname?authSource=dbname
+for /f "tokens=*" %%a in ("!MONGO_URI!") do set TEMP_URI=%%a
+for /f "tokens=4 delims=/" %%a in ("!TEMP_URI!") do set DB_WITH_PARAMS=%%a
+for /f "tokens=1 delims=?" %%a in ("!DB_WITH_PARAMS!") do set DB_NAME=%%a
+if "!DB_NAME!"==" " set DB_NAME=test
 echo Database: !DB_NAME!
 echo.
 
@@ -133,7 +136,9 @@ goto mongo_connected
 :check_local_mongo
 echo Checking if MongoDB is running on localhost:27017
 REM Extract database name from MONGO_URI
-for /f "tokens=4 delims=/" %%a in ("!MONGO_URI!") do set DB_NAME=%%a
+for /f "tokens=*" %%a in ("!MONGO_URI!") do set TEMP_URI=%%a
+for /f "tokens=4 delims=/" %%a in ("!TEMP_URI!") do set DB_WITH_PARAMS=%%a
+for /f "tokens=1 delims=?" %%a in ("!DB_WITH_PARAMS!") do set DB_NAME=%%a
 if "!DB_NAME!"=="" set DB_NAME=almdb
 powershell -Command "try { $tcp = New-Object System.Net.Sockets.TcpClient; $tcp.Connect('localhost', 27017); $tcp.Close(); Write-Host 'Connected to MongoDB successfully on localhost:27017'; Write-Host 'Database: %DB_NAME%'; exit 0 } catch { Write-Host 'MongoDB is not running'; exit 1 }"
 set MONGO_STATUS=%errorLevel%
@@ -208,7 +213,9 @@ set /p CLEAN_CHOICE="Do you want to clean the MongoDB database? (y/n): "
 if /i "%CLEAN_CHOICE%"=="y" (
     echo.
     REM Extract database name from MONGO_URI for warning
-    for /f "tokens=4 delims=/" %%a in ("!MONGO_URI!") do set DB_NAME=%%a
+    for /f "tokens=*" %%a in ("!MONGO_URI!") do set TEMP_URI=%%a
+    for /f "tokens=4 delims=/" %%a in ("!TEMP_URI!") do set DB_WITH_PARAMS=%%a
+    for /f "tokens=1 delims=?" %%a in ("!DB_WITH_PARAMS!") do set DB_NAME=%%a
     if "!DB_NAME!"=="" set DB_NAME=almdb
     echo WARNING: This will delete ALL data from the !DB_NAME! database!
     set /p CONFIRM="Are you sure? Type YES to confirm: "
