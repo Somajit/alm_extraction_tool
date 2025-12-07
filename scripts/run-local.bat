@@ -170,12 +170,48 @@ if not exist "backend\.env" (
 echo Backend configuration updated.
 echo.
 
+REM Find available ports
+echo Finding available ports...
+set MOCK_ALM_PORT=8001
+set BACKEND_PORT=8000
+set FRONTEND_PORT=5173
+
+REM Check and find available port for Mock ALM (starting from 8001)
+:find_mock_port
+netstat -ano | findstr ":%MOCK_ALM_PORT%" >nul
+if %errorLevel% equ 0 (
+    set /a MOCK_ALM_PORT+=1
+    goto find_mock_port
+)
+
+REM Check and find available port for Backend (starting from 8000)
+:find_backend_port
+netstat -ano | findstr ":%BACKEND_PORT%" >nul
+if %errorLevel% equ 0 (
+    set /a BACKEND_PORT+=1
+    goto find_backend_port
+)
+
+REM Check and find available port for Frontend (starting from 5173)
+:find_frontend_port
+netstat -ano | findstr ":%FRONTEND_PORT%" >nul
+if %errorLevel% equ 0 (
+    set /a FRONTEND_PORT+=1
+    goto find_frontend_port
+)
+
+echo Ports assigned: Mock ALM=%MOCK_ALM_PORT%, Backend=%BACKEND_PORT%, Frontend=%FRONTEND_PORT%
+echo.
+
+REM Update backend .env with actual ports
+powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^ALM_URL=.*', 'ALM_URL=http://localhost:%MOCK_ALM_PORT%'; $content = $content -replace '^MOCK_ALM_URL=.*', 'MOCK_ALM_URL=http://localhost:%MOCK_ALM_PORT%'; $content = $content -replace '^CORS_ORIGINS=.*', 'CORS_ORIGINS=http://localhost:%FRONTEND_PORT%'; $content | Set-Content backend\.env"
+
 REM Step 5: Start Mock ALM Server
 echo Step 5: Start Mock ALM Server
 echo ------------------------------
 echo.
-echo Starting Mock ALM server on http://localhost:8001
-start "Mock ALM Server" cmd /k "cd mock_alm && %USERPROFILE%\pyenv\Scripts\python.exe main.py"
+echo Starting Mock ALM server on http://localhost:%MOCK_ALM_PORT%
+start "Mock ALM Server" cmd /k "cd mock_alm && %USERPROFILE%\pyenv\Scripts\python.exe main.py --port %MOCK_ALM_PORT%"
 timeout /t 3 /nobreak >nul
 echo Mock ALM server started.
 echo.
@@ -184,8 +220,8 @@ REM Step 6: Start Backend Server
 echo Step 6: Start Backend Server
 echo -----------------------------
 echo.
-echo Starting Backend server on http://localhost:8000
-start "Backend Server" cmd /k "cd backend && %USERPROFILE%\pyenv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+echo Starting Backend server on http://localhost:%BACKEND_PORT%
+start "Backend Server" cmd /k "cd backend && %USERPROFILE%\pyenv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port %BACKEND_PORT% --reload"
 timeout /t 5 /nobreak >nul
 echo Backend server started.
 echo.
@@ -194,28 +230,53 @@ REM Step 7: Start Frontend Server
 echo Step 7: Start Frontend Server
 echo ------------------------------
 echo.
-echo Starting Frontend development server on http://localhost:5173
-start "Frontend Server" cmd /k "cd frontend && npm run dev"
+echo Starting Frontend development server on http://localhost:%FRONTEND_PORT%
+start "Frontend Server" cmd /k "cd frontend && set PORT=%FRONTEND_PORT% && npm run dev"
 timeout /t 3 /nobreak >nul
 echo Frontend server started.
 echo.
+
+REM Write startup info to startup.log
+(
+echo ======================================
+echo ReleaseCraft - Startup Information
+echo ======================================
+echo Date: %date% %time%
+echo.
+echo Services Running:
+echo - Mock ALM:  http://localhost:%MOCK_ALM_PORT%
+echo - Backend:   http://localhost:%BACKEND_PORT%
+echo - Frontend:  http://localhost:%FRONTEND_PORT%
+echo - MongoDB:   %MONGO_URI%
+echo.
+echo API Documentation: http://localhost:%BACKEND_PORT%/docs
+echo.
+echo Logs:
+echo - Backend and services output in separate command windows
+echo.
+echo To stop services:
+echo   1. Close each command window (Mock ALM, Backend, Frontend^)
+echo   2. Or press Ctrl+C in each window
+echo ======================================
+) > logs\startup.log
 
 echo ========================================
 echo All Services Started Successfully!
 echo ========================================
 echo.
 echo Services running:
-echo   - Mock ALM:  http://localhost:8001
-echo   - Backend:   http://localhost:8000
-echo   - Frontend:  http://localhost:5173
+echo   - Mock ALM:  http://localhost:%MOCK_ALM_PORT%
+echo   - Backend:   http://localhost:%BACKEND_PORT%
+echo   - Frontend:  http://localhost:%FRONTEND_PORT%
 echo   - MongoDB:   %MONGO_URI%
 echo.
-echo API Documentation: http://localhost:8000/docs
+echo Startup info saved to logs\startup.log
+echo API Documentation: http://localhost:%BACKEND_PORT%/docs
 echo.
 echo Press any key to view the application in your browser
 pause >nul
 
-start http://localhost:5173
+start http://localhost:%FRONTEND_PORT%
 
 echo.
 echo Application opened in browser.

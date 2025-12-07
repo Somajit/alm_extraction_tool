@@ -880,4 +880,10 @@ def root():
     }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    import argparse
+    parser = argparse.ArgumentParser(description='Mock ALM Server')
+    parser.add_argument('--port', type=int, default=8001, help='Port to run the server on')
+    args = parser.parse_args()
+    
+    logger.info(f'Starting Mock ALM server on port {args.port}')
+    uvicorn.run(app, host="0.0.0.0", port=args.port)

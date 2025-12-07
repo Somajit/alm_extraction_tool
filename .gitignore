@@ -6,6 +6,7 @@ frontend/.env
 frontend/.env.local
 .env
 .env.local
+.setup_done
 
 # Dependencies
 node_modules/
