@@ -36,8 +36,7 @@ services:
       - MONGO_URI=mongodb://mongo:27017/almdb
       - CORS_ORIGINS=http://localhost:5173
       - USE_MOCK_ALM=true
-      - MOCK_ALM_URL=http://mock-alm:8001
-      - ALM_URL=https://your-alm-server.com/qcbin
+      - ALM_BASE_URL=http://mock-alm:8001
       - ALM_ENCRYPTION_KEY=${ALM_ENCRYPTION_KEY:-}
     env_file:
       - ./backend/.env.local

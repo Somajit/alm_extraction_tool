@@ -10,8 +10,7 @@ Write-Host "[1/6] Updating backend/.env for Docker..." -ForegroundColor Yellow
 $envContent = @"
 MONGO_URI=mongodb://mongodb:27017/almdb
 CORS_ORIGINS=http://localhost:5173
-ALM_URL=http://mock-alm:8001
-MOCK_ALM_URL=http://mock-alm:8001
+ALM_BASE_URL=http://mock-alm:8001
 USE_MOCK_ALM=true
 SECRET_KEY=your-secret-key-change-in-production
 "@

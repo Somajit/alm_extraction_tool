@@ -157,31 +157,71 @@ else
     exit 1
 fi
 
+# Try to read existing MONGO_URI from backend/.env
+EXISTING_MONGO_URI=""
+if [ -f "backend/.env" ]; then
+    EXISTING_MONGO_URI=$(grep "^MONGO_URI=" backend/.env | cut -d '=' -f 2)
+fi
+
 MONGO_URI=""
 START_MONGO_LOCAL=0
 case $MONGO_CHOICE in
     1)
-        MONGO_URI="mongodb://localhost:27017/almdb"
+        if [ -n "$EXISTING_MONGO_URI" ]; then
+            MONGO_URI="$EXISTING_MONGO_URI"
+        else
+            MONGO_URI="mongodb://localhost:27017/almdb"
+        fi
         START_MONGO_LOCAL=1
         echo "Selected: Local MongoDB (workspace/mongodb)"
         echo "Note: Will attempt to start MongoDB if not running"
         ;;
     2)
-        MONGO_URI="mongodb://localhost:27017/almdb"
+        if [ -n "$EXISTING_MONGO_URI" ]; then
+            MONGO_URI="$EXISTING_MONGO_URI"
+        else
+            MONGO_URI="mongodb://localhost:27017/almdb"
+        fi
         echo "Selected: Docker MongoDB (localhost:27017)"
         echo "Note: Make sure Docker MongoDB container is running"
         ;;
     3)
-        read -p "Enter MongoDB Atlas connection string: " MONGO_URI
+        if [ -n "$EXISTING_MONGO_URI" ]; then
+            echo "Found existing MongoDB URI in .env: $EXISTING_MONGO_URI"
+            read -p "Use this connection? (y/n, default=y): " USE_EXISTING
+            USE_EXISTING=${USE_EXISTING:-y}
+            if [[ "$USE_EXISTING" =~ ^[Yy]$ ]]; then
+                MONGO_URI="$EXISTING_MONGO_URI"
+            else
+                read -p "Enter MongoDB Atlas connection string: " MONGO_URI
+            fi
+        else
+            read -p "Enter MongoDB Atlas connection string: " MONGO_URI
+        fi
         echo "Selected: MongoDB Atlas - $MONGO_URI"
         ;;
     4)
-        read -p "Enter custom MongoDB connection string: " MONGO_URI
+        if [ -n "$EXISTING_MONGO_URI" ]; then
+            echo "Found existing MongoDB URI in .env: $EXISTING_MONGO_URI"
+            read -p "Use this connection? (y/n, default=y): " USE_EXISTING
+            USE_EXISTING=${USE_EXISTING:-y}
+            if [[ "$USE_EXISTING" =~ ^[Yy]$ ]]; then
+                MONGO_URI="$EXISTING_MONGO_URI"
+            else
+                read -p "Enter custom MongoDB connection string: " MONGO_URI
+            fi
+        else
+            read -p "Enter custom MongoDB connection string: " MONGO_URI
+        fi
         echo "Selected: Custom MongoDB - $MONGO_URI"
         ;;
     *)
         echo "Invalid choice. Defaulting to Local MongoDB."
-        MONGO_URI="mongodb://localhost:27017/almdb"
+        if [ -n "$EXISTING_MONGO_URI" ]; then
+            MONGO_URI="$EXISTING_MONGO_URI"
+        else
+            MONGO_URI="mongodb://localhost:27017/almdb"
+        fi
         ;;
 esac
 echo ""
@@ -195,9 +235,15 @@ echo ""
 if [ "$MONGO_CHOICE" = "1" ] || [ "$MONGO_CHOICE" = "2" ]; then
     echo "Checking if MongoDB is running on localhost:27017..."
     
+    # Extract database name from MONGO_URI
+    DB_NAME=$(echo $MONGO_URI | awk -F'/' '{print $NF}')
+    if [ -z "$DB_NAME" ]; then
+        DB_NAME="almdb"
+    fi
+    
     if timeout 2 bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
         echo -e "${GREEN}✓ Connected to MongoDB successfully on localhost:27017${NC}"
-        echo "Database: almdb"
+        echo "Database: $DB_NAME"
     else
         echo -e "${YELLOW}MongoDB is not running on localhost:27017${NC}"
         
@@ -243,9 +289,25 @@ if [ "$MONGO_CHOICE" = "1" ] || [ "$MONGO_CHOICE" = "2" ]; then
     fi
     fi
 else
-    # For Atlas or Custom MongoDB (options 3 and 4), skip localhost check
+    # For Atlas or Custom MongoDB (options 3 and 4), show connection info
     echo "Using remote MongoDB connection"
     echo "Connection: $MONGO_URI"
+    
+    # Extract and show database name
+    DB_NAME=$(echo $MONGO_URI | awk -F'/' '{print $NF}' | cut -d'?' -f1)
+    if [ -n "$DB_NAME" ]; then
+        echo "Database: $DB_NAME"
+    fi
+    
+    # Try to test connection using Python
+    echo "Testing MongoDB connection..."
+    $PYTHON_CMD -c "from pymongo import MongoClient; import sys; client = MongoClient('$MONGO_URI', serverSelectionTimeoutMS=5000); client.server_info(); print('✓ Connection successful'); sys.exit(0)" 2>/dev/null
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ MongoDB connection verified${NC}"
+    else
+        echo -e "${YELLOW}⚠ Warning: Could not verify MongoDB connection${NC}"
+        echo "Continuing anyway... Connection will be tested when starting services."
+    fi
 fi
 echo ""
 
@@ -257,7 +319,12 @@ read -p "Do you want to clean the MongoDB database? (y/n): " CLEAN_CHOICE
 
 if [[ "$CLEAN_CHOICE" =~ ^[Yy]$ ]]; then
     echo ""
-    echo -e "${YELLOW}WARNING: This will delete ALL data from the almdb database!${NC}"
+    # Extract database name from MONGO_URI
+    DB_NAME=$(echo $MONGO_URI | awk -F'/' '{print $NF}' | cut -d'?' -f1)
+    if [ -z "$DB_NAME" ]; then
+        DB_NAME="almdb"
+    fi
+    echo -e "${YELLOW}WARNING: This will delete ALL data from the $DB_NAME database!${NC}"
     read -p "Are you sure? Type YES to confirm: " CONFIRM
     
     if [ "$CONFIRM" = "YES" ]; then
@@ -287,12 +354,12 @@ echo "Updating backend/.env with MongoDB connection and local URLs..."
 if [ -f "backend/.env" ]; then
     # Update existing .env file
     sed -i "s|^MONGO_URI=.*|MONGO_URI=$MONGO_URI|" backend/.env
-    sed -i "s|^ALM_URL=.*|ALM_URL=http://localhost:8001|" backend/.env
+    sed -i "s|^ALM_BASE_URL=.*|ALM_BASE_URL=http://localhost:8001|" backend/.env
 else
     # Create new .env file
     cat > backend/.env <<EOF
 MONGO_URI=$MONGO_URI
-ALM_URL=http://localhost:8001
+ALM_BASE_URL=http://localhost:8001
 USE_MOCK_ALM=true
 CORS_ORIGINS=http://localhost:5173
 SECRET_KEY=your-secret-key-change-in-production

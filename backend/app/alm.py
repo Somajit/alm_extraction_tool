@@ -26,10 +26,10 @@ class ALM:
     def __init__(self, db: AsyncIOMotorDatabase, encryption_key: Optional[str] = None):
         self.db = db
         self.use_mock = os.getenv("USE_MOCK_ALM", "false").lower() == "true"
-        self.base_url = os.getenv("MOCK_ALM_URL" if self.use_mock else "ALM_URL", "").rstrip("/")
+        self.base_url = os.getenv("ALM_BASE_URL", "").rstrip("/")
         
         if not self.base_url:
-            raise ValueError(f"{'MOCK_ALM_URL' if self.use_mock else 'ALM_URL'} not set")
+            raise ValueError("ALM_BASE_URL not set")
         
         # Session state
         self.lwsso_cookie = None

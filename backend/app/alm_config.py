@@ -427,7 +427,7 @@ class ALMConfig:
         Build complete ALM URL with base URL and path parameters.
         
         Args:
-            base_url: Base URL (from .env - ALM_URL or MOCK_ALM_URL)
+            base_url: Base URL (from .env - ALM_BASE_URL)
             endpoint_name: Name of the endpoint
             **path_params: Path parameters (domain, project, id, etc.)
         

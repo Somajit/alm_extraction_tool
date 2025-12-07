@@ -33,7 +33,6 @@ load_dotenv(dotenv_path=env_path)
 
 MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/almdb')
 DEFAULT_ORIGINS = [os.environ.get('CORS_ORIGINS', 'http://localhost:5173')]
-ALM_BASE_URL = os.environ.get('ALM_BASE_URL', 'https://alm.company.com/qcbin')
 ALM_ENCRYPTION_KEY = os.environ.get('ALM_ENCRYPTION_KEY', '')
 
 client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)

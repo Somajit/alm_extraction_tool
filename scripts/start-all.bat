@@ -10,7 +10,7 @@ echo.
 
 REM Update backend .env for local execution
 echo Configuring backend for local execution...
-powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^MONGO_URI=.*', 'MONGO_URI=mongodb://localhost:27017/almdb'; $content = $content -replace '^ALM_URL=.*', 'ALM_URL=http://localhost:8001'; $content = $content -replace '^MOCK_ALM_URL=.*', 'MOCK_ALM_URL=http://localhost:8001'; if ($content -notmatch 'MOCK_ALM_URL=') { $content += "`nMOCK_ALM_URL=http://localhost:8001" }; $content | Set-Content backend\.env"
+powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^MONGO_URI=.*', 'MONGO_URI=mongodb://localhost:27017/almdb'; $content = $content -replace '^ALM_BASE_URL=.*', 'ALM_BASE_URL=http://localhost:8001'; $content | Set-Content backend\.env"
 echo.
 
 REM Check if MongoDB is running

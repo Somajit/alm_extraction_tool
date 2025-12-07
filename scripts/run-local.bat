@@ -23,30 +23,70 @@ set /p MONGO_CHOICE="Enter your choice (1-4): "
 
 set MONGO_URI=
 set START_MONGO_LOCAL=0
+
+REM Try to read MONGO_URI from backend/.env if it exists
+if exist "backend\.env" (
+    for /f "tokens=2 delims==" %%a in ('findstr /b "MONGO_URI=" backend\.env') do set EXISTING_MONGO_URI=%%a
+)
+
 if "%MONGO_CHOICE%"=="1" (
-    set MONGO_URI=mongodb://localhost:27017/releasecraftdb
+    if defined EXISTING_MONGO_URI (
+        set MONGO_URI=!EXISTING_MONGO_URI!
+    ) else (
+        set MONGO_URI=mongodb://localhost:27017/almdb
+    )
     set START_MONGO_LOCAL=1
     echo Selected: Local MongoDB (workspace/mongodb^)
     goto mongo_selected
 )
 if "%MONGO_CHOICE%"=="2" (
-    set MONGO_URI=mongodb://localhost:27017/releasecraftdb
+    if defined EXISTING_MONGO_URI (
+        set MONGO_URI=!EXISTING_MONGO_URI!
+    ) else (
+        set MONGO_URI=mongodb://localhost:27017/almdb
+    )
     echo Selected: Docker MongoDB (localhost:27017^)
     echo Note: Make sure Docker MongoDB container is running
     goto mongo_selected
 )
 if "%MONGO_CHOICE%"=="3" (
-    set /p MONGO_URI="Enter MongoDB Atlas connection string: "
+    if defined EXISTING_MONGO_URI (
+        echo Found existing MongoDB URI in .env: !EXISTING_MONGO_URI!
+        set /p USE_EXISTING="Use this connection? (y/n, default=y): "
+        if /i "!USE_EXISTING!"=="" set USE_EXISTING=y
+        if /i "!USE_EXISTING!"=="y" (
+            set MONGO_URI=!EXISTING_MONGO_URI!
+        ) else (
+            set /p MONGO_URI="Enter MongoDB Atlas connection string: "
+        )
+    ) else (
+        set /p MONGO_URI="Enter MongoDB Atlas connection string: "
+    )
     echo Selected: MongoDB Atlas - !MONGO_URI!
     goto mongo_selected
 )
 if "%MONGO_CHOICE%"=="4" (
-    set /p MONGO_URI="Enter custom MongoDB connection string: "
+    if defined EXISTING_MONGO_URI (
+        echo Found existing MongoDB URI in .env: !EXISTING_MONGO_URI!
+        set /p USE_EXISTING="Use this connection? (y/n, default=y): "
+        if /i "!USE_EXISTING!"=="" set USE_EXISTING=y
+        if /i "!USE_EXISTING!"=="y" (
+            set MONGO_URI=!EXISTING_MONGO_URI!
+        ) else (
+            set /p MONGO_URI="Enter custom MongoDB connection string: "
+        )
+    ) else (
+        set /p MONGO_URI="Enter custom MongoDB connection string: "
+    )
     echo Selected: Custom MongoDB - !MONGO_URI!
     goto mongo_selected
 )
 echo Invalid choice. Defaulting to Local MongoDB.
-set MONGO_URI=mongodb://localhost:27017/releasecraftdb
+if defined EXISTING_MONGO_URI (
+    set MONGO_URI=!EXISTING_MONGO_URI!
+) else (
+    set MONGO_URI=mongodb://localhost:27017/almdb
+)
 set START_MONGO_LOCAL=1
 
 :mongo_selected
@@ -66,7 +106,10 @@ goto mongo_connected
 
 :check_local_mongo
 echo Checking if MongoDB is running on localhost:27017
-powershell -Command "try { $tcp = New-Object System.Net.Sockets.TcpClient; $tcp.Connect('localhost', 27017); $tcp.Close(); Write-Host 'Connected to MongoDB successfully on localhost:27017'; Write-Host 'Database: releasecraftdb'; exit 0 } catch { Write-Host 'MongoDB is not running'; exit 1 }"
+REM Extract database name from MONGO_URI
+for /f "tokens=4 delims=/" %%a in ("!MONGO_URI!") do set DB_NAME=%%a
+if "!DB_NAME!"=="" set DB_NAME=almdb
+powershell -Command "try { $tcp = New-Object System.Net.Sockets.TcpClient; $tcp.Connect('localhost', 27017); $tcp.Close(); Write-Host 'Connected to MongoDB successfully on localhost:27017'; Write-Host 'Database: %DB_NAME%'; exit 0 } catch { Write-Host 'MongoDB is not running'; exit 1 }"
 set MONGO_STATUS=%errorLevel%
 
 if %MONGO_STATUS% equ 0 (
@@ -135,7 +178,10 @@ set /p CLEAN_CHOICE="Do you want to clean the MongoDB database? (y/n): "
 
 if /i "%CLEAN_CHOICE%"=="y" (
     echo.
-    echo WARNING: This will delete ALL data from the releasecraftdb database!
+    REM Extract database name from MONGO_URI for warning
+    for /f "tokens=4 delims=/" %%a in ("!MONGO_URI!") do set DB_NAME=%%a
+    if "!DB_NAME!"=="" set DB_NAME=almdb
+    echo WARNING: This will delete ALL data from the !DB_NAME! database!
     set /p CONFIRM="Are you sure? Type YES to confirm: "
     
     if "!CONFIRM!"=="YES" (
@@ -166,14 +212,14 @@ if not exist "backend\.env" (
     echo Creating backend/.env file
     (
         echo MONGO_URI=%MONGO_URI%
-        echo ALM_URL=http://localhost:8001
+        echo ALM_BASE_URL=http://localhost:8001
         echo USE_MOCK_ALM=true
         echo CORS_ORIGINS=http://localhost:5173
         echo SECRET_KEY=your-secret-key-change-in-production
     ) > backend\.env
 ) else (
     echo Updating environment variables in backend/.env
-    powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^MONGO_URI=.*', 'MONGO_URI=%MONGO_URI%'; $content = $content -replace '^ALM_URL=.*', 'ALM_URL=http://localhost:8001'; $content | Set-Content backend\.env"
+    powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^MONGO_URI=.*', 'MONGO_URI=%MONGO_URI%'; $content = $content -replace '^ALM_BASE_URL=.*', 'ALM_BASE_URL=http://localhost:8001'; $content | Set-Content backend\.env"
 )
 echo Backend configuration updated.
 echo.
@@ -230,7 +276,7 @@ echo Ports assigned: Mock ALM=%MOCK_ALM_PORT%, Backend=%BACKEND_PORT%, Frontend=
 echo.
 
 REM Update backend .env with actual ports
-powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^ALM_URL=.*', 'ALM_URL=http://localhost:%MOCK_ALM_PORT%'; $content = $content -replace '^CORS_ORIGINS=.*', 'CORS_ORIGINS=http://localhost:%FRONTEND_PORT%'; $content | Set-Content backend\.env"
+powershell -Command "$content = Get-Content backend\.env; $content = $content -replace '^ALM_BASE_URL=.*', 'ALM_BASE_URL=http://localhost:%MOCK_ALM_PORT%'; $content = $content -replace '^CORS_ORIGINS=.*', 'CORS_ORIGINS=http://localhost:%FRONTEND_PORT%'; $content | Set-Content backend\.env"
 
 REM Initialize admin user in MongoDB
 echo Initializing admin user...
