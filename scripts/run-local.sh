@@ -190,44 +190,47 @@ echo ""
 echo "Step 2: MongoDB Status"
 echo "----------------------"
 echo ""
-echo "Checking if MongoDB is running..."
 
-if timeout 2 bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
-    echo -e "${GREEN}✓ Connected to MongoDB successfully on localhost:27017${NC}"
-    echo "Database: releasecraftdb"
-else
-    echo -e "${YELLOW}MongoDB is not running on localhost:27017${NC}"
+# Only check localhost MongoDB for options 1 and 2
+if [ "$MONGO_CHOICE" = "1" ] || [ "$MONGO_CHOICE" = "2" ]; then
+    echo "Checking if MongoDB is running on localhost:27017..."
     
-    if [ $START_MONGO_LOCAL -eq 1 ]; then
-        echo "Attempting to start local MongoDB..."
+    if timeout 2 bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
+        echo -e "${GREEN}✓ Connected to MongoDB successfully on localhost:27017${NC}"
+        echo "Database: releasecraftdb"
+    else
+        echo -e "${YELLOW}MongoDB is not running on localhost:27017${NC}"
         
-        # Check if mongod exists in workspace
-        if [ -f "mongodb/bin/mongod" ]; then
-            echo "Starting MongoDB from workspace/mongodb..."
-            mkdir -p mongodb_data
-            mongodb/bin/mongod --dbpath mongodb_data --port 27017 --logpath logs/mongodb.log --fork
-            sleep 3
+        if [ $START_MONGO_LOCAL -eq 1 ]; then
+            echo "Attempting to start local MongoDB..."
             
-            # Verify MongoDB started
-            if timeout 2 bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
-                echo -e "${GREEN}✓ MongoDB started successfully${NC}"
-            else
-                echo -e "${RED}✗ Failed to start MongoDB${NC}"
-                echo "Please start MongoDB manually and try again."
-                exit 1
-            fi
-        elif command -v mongod &> /dev/null; then
-            echo "Starting system MongoDB..."
-            sudo systemctl start mongod || sudo service mongod start
-            sleep 3
-            
-            # Verify MongoDB started
-            if timeout 2 bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
-                echo -e "${GREEN}✓ MongoDB started successfully${NC}"
-            else
-                echo -e "${RED}✗ Failed to start MongoDB${NC}"
-                echo "Please start MongoDB manually and try again."
-                exit 1
+            # Check if mongod exists in workspace
+            if [ -f "mongodb/bin/mongod" ]; then
+                echo "Starting MongoDB from workspace/mongodb..."
+                mkdir -p mongodb_data
+                mongodb/bin/mongod --dbpath mongodb_data --port 27017 --logpath logs/mongodb.log --fork
+                sleep 3
+                
+                # Verify MongoDB started
+                if timeout 2 bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
+                    echo -e "${GREEN}✓ MongoDB started successfully${NC}"
+                else
+                    echo -e "${RED}✗ Failed to start MongoDB${NC}"
+                    echo "Please start MongoDB manually and try again."
+                    exit 1
+                fi
+            elif command -v mongod &> /dev/null; then
+                echo "Starting system MongoDB..."
+                sudo systemctl start mongod || sudo service mongod start
+                sleep 3
+                
+                # Verify MongoDB started
+                if timeout 2 bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
+                    echo -e "${GREEN}✓ MongoDB started successfully${NC}"
+                else
+                    echo -e "${RED}✗ Failed to start MongoDB${NC}"
+                    echo "Please start MongoDB manually and try again."
+                    exit 1
             fi
         else
             echo -e "${RED}✗ MongoDB not found${NC}"
@@ -238,6 +241,11 @@ else
         echo "Please make sure MongoDB is running at $MONGO_URI"
         exit 1
     fi
+    fi
+else
+    # For Atlas or Custom MongoDB (options 3 and 4), skip localhost check
+    echo "Using remote MongoDB connection"
+    echo "Connection: $MONGO_URI"
 fi
 echo ""
 

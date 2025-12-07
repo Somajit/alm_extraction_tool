@@ -56,7 +56,16 @@ REM Step 2: MongoDB Status and Auto-start
 echo Step 2: MongoDB Status
 echo ----------------------
 echo.
-echo Checking if MongoDB is running
+
+REM Only check localhost MongoDB for options 1 and 2
+if %MONGO_CHOICE% equ 1 goto check_local_mongo
+if %MONGO_CHOICE% equ 2 goto check_local_mongo
+REM For options 3 and 4 (Atlas/Custom), skip local MongoDB check
+echo Using remote MongoDB connection: !MONGO_URI!
+goto mongo_connected
+
+:check_local_mongo
+echo Checking if MongoDB is running on localhost:27017
 powershell -Command "try { $tcp = New-Object System.Net.Sockets.TcpClient; $tcp.Connect('localhost', 27017); $tcp.Close(); Write-Host 'Connected to MongoDB successfully on localhost:27017'; Write-Host 'Database: releasecraftdb'; exit 0 } catch { Write-Host 'MongoDB is not running'; exit 1 }"
 set MONGO_STATUS=%errorLevel%
 
