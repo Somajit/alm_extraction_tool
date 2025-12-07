@@ -1,4 +1,13 @@
 #!/bin/bash
+# 
+# Local Development Environment Manager for Linux/macOS
+# 
+# Make this script executable:
+#   chmod +x scripts/run-local.sh
+# 
+# Run the script:
+#   ./scripts/run-local.sh
+#
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -7,6 +16,9 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 cd "$(dirname "$0")/.."
+
+# Create logs directory if it doesn't exist
+mkdir -p logs
 
 echo "========================================"
 echo "Local Development Environment Manager"
@@ -26,12 +38,26 @@ echo "4. Custom MongoDB connection string"
 echo ""
 read -p "Enter your choice (1-4): " MONGO_CHOICE
 
+# Determine Python command early (before MongoDB operations)
+if command -v python3 &> /dev/null; then
+    PYTHON_CMD="python3"
+elif [ -f "$HOME/pyenv/bin/python" ]; then
+    PYTHON_CMD="$HOME/pyenv/bin/python"
+elif command -v python &> /dev/null; then
+    PYTHON_CMD="python"
+else
+    echo -e "${RED}Error: Python not found. Please install Python 3.${NC}"
+    exit 1
+fi
+
 MONGO_URI=""
+START_MONGO_LOCAL=0
 case $MONGO_CHOICE in
     1)
         MONGO_URI="mongodb://localhost:27017/releasecraftdb"
+        START_MONGO_LOCAL=1
         echo "Selected: Local MongoDB (workspace/mongodb)"
-        echo "Note: Make sure MongoDB is running"
+        echo "Note: Will attempt to start MongoDB if not running"
         ;;
     2)
         MONGO_URI="mongodb://localhost:27017/releasecraftdb"
@@ -48,7 +74,7 @@ case $MONGO_CHOICE in
         ;;
     *)
         echo "Invalid choice. Defaulting to Local MongoDB."
-        MONGO_URI="mongodb://localhost:27017/alm_db"
+        MONGO_URI="mongodb://localhost:27017/releasecraftdb"
         ;;
 esac
 echo ""
@@ -61,13 +87,50 @@ echo "Checking if MongoDB is running..."
 
 if timeout 2 bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
     echo -e "${GREEN}✓ Connected to MongoDB successfully on localhost:27017${NC}"
-    echo "Database: alm_db"
+    echo "Database: releasecraftdb"
 else
-    echo -e "${RED}✗ Cannot connect to MongoDB at $MONGO_URI${NC}"
-    echo "Please make sure MongoDB is running."
-    echo ""
-    read -p "Press Enter to exit..."
-    exit 1
+    echo -e "${YELLOW}MongoDB is not running on localhost:27017${NC}"
+    
+    if [ $START_MONGO_LOCAL -eq 1 ]; then
+        echo "Attempting to start local MongoDB..."
+        
+        # Check if mongod exists in workspace
+        if [ -f "mongodb/bin/mongod" ]; then
+            echo "Starting MongoDB from workspace/mongodb..."
+            mkdir -p mongodb_data
+            mongodb/bin/mongod --dbpath mongodb_data --port 27017 --logpath logs/mongodb.log --fork
+            sleep 3
+            
+            # Verify MongoDB started
+            if timeout 2 bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
+                echo -e "${GREEN}✓ MongoDB started successfully${NC}"
+            else
+                echo -e "${RED}✗ Failed to start MongoDB${NC}"
+                echo "Please start MongoDB manually and try again."
+                exit 1
+            fi
+        elif command -v mongod &> /dev/null; then
+            echo "Starting system MongoDB..."
+            sudo systemctl start mongod || sudo service mongod start
+            sleep 3
+            
+            # Verify MongoDB started
+            if timeout 2 bash -c "echo > /dev/tcp/localhost/27017" 2>/dev/null; then
+                echo -e "${GREEN}✓ MongoDB started successfully${NC}"
+            else
+                echo -e "${RED}✗ Failed to start MongoDB${NC}"
+                echo "Please start MongoDB manually and try again."
+                exit 1
+            fi
+        else
+            echo -e "${RED}✗ MongoDB not found${NC}"
+            echo "Please install MongoDB or start it manually."
+            exit 1
+        fi
+    else
+        echo "Please make sure MongoDB is running at $MONGO_URI"
+        exit 1
+    fi
 fi
 echo ""
 
@@ -79,13 +142,13 @@ read -p "Do you want to clean the MongoDB database? (y/n): " CLEAN_CHOICE
 
 if [[ "$CLEAN_CHOICE" =~ ^[Yy]$ ]]; then
     echo ""
-    echo -e "${YELLOW}WARNING: This will delete ALL data from the alm_db database!${NC}"
+    echo -e "${YELLOW}WARNING: This will delete ALL data from the releasecraftdb database!${NC}"
     read -p "Are you sure? Type YES to confirm: " CONFIRM
     
     if [ "$CONFIRM" = "YES" ]; then
         echo ""
         echo "Cleaning MongoDB database using Python..."
-        python3 -c "from pymongo import MongoClient; client = MongoClient('$MONGO_URI'); db = client.get_database(); [db.drop_collection(col) for col in db.list_collection_names()]; print('Database cleaned successfully.')"
+        $PYTHON_CMD -c "from pymongo import MongoClient; client = MongoClient('$MONGO_URI'); db = client.get_database(); [db.drop_collection(col) for col in db.list_collection_names()]; print('Database cleaned successfully.')"
         
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}Database cleaned successfully!${NC}"
@@ -129,15 +192,6 @@ EOF
 fi
 echo "Backend configuration updated."
 echo ""
-
-# Determine Python command
-if command -v python3 &> /dev/null; then
-    PYTHON_CMD="python3"
-elif [ -f "$HOME/pyenv/bin/python" ]; then
-    PYTHON_CMD="$HOME/pyenv/bin/python"
-else
-    PYTHON_CMD="python"
-fi
 
 # Step 5: Start Mock ALM Server
 echo "Step 5: Start Mock ALM Server"
