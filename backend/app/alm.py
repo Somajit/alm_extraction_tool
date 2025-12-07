@@ -121,9 +121,12 @@ class ALM:
         start_index = 1
         page_size = 100
         
+        # Remove pagination params from filter_params to avoid conflicts
+        clean_filter_params = {k: v for k, v in filter_params.items() if k not in ['start_index', 'page_size']}
+        
         while True:
             params = ALMConfig.build_query_params(endpoint_name, start_index=start_index, 
-                                                  page_size=page_size, **filter_params)
+                                                  page_size=page_size, **clean_filter_params)
             
             response = await self._make_request_with_retry(url, "GET", params, username=username)
             
@@ -145,7 +148,7 @@ class ALM:
         return all_entities
     
     async def _store_entities(self, endpoint_name: str, entities: List[Dict], username: str, 
-                             parent_id: Optional[str] = None) -> int:
+                             parent_id: Optional[str] = None, project_group: str = "default") -> int:
         """
         Generic entity storage: Parse and store entities in MongoDB.
         Returns count of stored entities.
@@ -168,8 +171,12 @@ class ALM:
         stored_count = 0
         
         for raw_entity in entities:
-            entity = ALMConfig.parse_alm_response_to_entity(endpoint_name, raw_entity, username, parent_id)
-            await collection.replace_one({"user": username, "id": entity["id"]}, entity, upsert=True)
+            entity = ALMConfig.parse_alm_response_to_entity(endpoint_name, raw_entity, username, parent_id, project_group)
+            await collection.replace_one(
+                {"user": username, "project_group": project_group, "id": entity["id"]}, 
+                entity, 
+                upsert=True
+            )
             stored_count += 1
         
         return stored_count
@@ -253,7 +260,7 @@ class ALM:
     # =========================================================================
     
     async def fetch_and_store(self, endpoint_name: str, username: str, domain: str, project: str, 
-                             **filter_params) -> Dict[str, Any]:
+                             project_group: str = "default", **filter_params) -> Dict[str, Any]:
         """
         Universal fetch & store function for ANY ALM entity.
         Handles: domains, projects, folders, tests, releases, cycles, test-sets, runs, defects, attachments, etc.
@@ -270,11 +277,13 @@ class ALM:
             if not all_entities:
                 return {"success": True, "count": 0, "entities": []}
             
-            # Store in MongoDB
-            stored_count = await self._store_entities(endpoint_name, all_entities, username, 
-                                                     filter_params.get("parent_id"))
+            # Store in MongoDB with project_group
+            stored_count = await self._store_entities(
+                endpoint_name, all_entities, username, 
+                filter_params.get("parent_id"), project_group
+            )
             
-            logger.info(f"Stored {stored_count} {endpoint_name} in MongoDB")
+            logger.info(f"Stored {stored_count} {endpoint_name} for {username}/{project_group} in MongoDB")
             
             return {"success": True, "count": stored_count, "entities": all_entities}
             
@@ -321,17 +330,17 @@ class ALM:
         return result
         return result
     
-    async def fetch_and_store_root_folders(self, username: str, domain: str, project: str) -> Dict[str, Any]:
+    async def fetch_and_store_root_folders(self, username: str, domain: str, project: str, project_group: str = "default") -> Dict[str, Any]:
         """Fetch root test folders using generic engine."""
-        return await self.fetch_and_store("test-folders", username, domain, project, parent_id="0")
+        return await self.fetch_and_store("test-folders", username, domain, project, project_group, parent_id="0")
     
-    async def fetch_and_store_releases(self, username: str, domain: str, project: str) -> Dict[str, Any]:
+    async def fetch_and_store_releases(self, username: str, domain: str, project: str, project_group: str = "default") -> Dict[str, Any]:
         """Fetch releases using generic engine."""
-        return await self.fetch_and_store("releases", username, domain, project)
+        return await self.fetch_and_store("releases", username, domain, project, project_group)
     
-    async def fetch_and_store_defects(self, username: str, domain: str, project: str, **kwargs) -> Dict[str, Any]:
+    async def fetch_and_store_defects(self, username: str, domain: str, project: str, project_group: str = "default", **kwargs) -> Dict[str, Any]:
         """Fetch defects using generic engine."""
-        return await self.fetch_and_store("defects", username, domain, project)
+        return await self.fetch_and_store("defects", username, domain, project, project_group, **kwargs)
     
     async def fetch_release_cycles(self, username: str, domain: str, project: str, release_id: str) -> List[Dict]:
         """Fetch release cycles using generic engine."""

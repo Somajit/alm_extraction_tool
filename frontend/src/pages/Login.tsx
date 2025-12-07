@@ -14,11 +14,16 @@ import {
   Typography,
 } from '@mui/material'
 import { authenticate, getDomains, getProjects, Domain, Project } from '../api'
+import axios from 'axios'
+
+const API_BASE = 'http://localhost:8000'
 
 interface LoginPageState {
   step: number
   username: string
   password: string
+  projectGroup: string
+  projectGroups: string[]
   domains: Domain[]
   projects: Project[]
   selectedDomain: string
@@ -28,7 +33,7 @@ interface LoginPageState {
 }
 
 interface LoginProps {
-  onLogin: () => void
+  onLogin: (role: string) => void
 }
 
 const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
@@ -36,6 +41,8 @@ const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
     step: 1,
     username: '',
     password: '',
+    projectGroup: 'default',
+    projectGroups: ['default'],
     domains: [],
     projects: [],
     selectedDomain: '',
@@ -44,13 +51,56 @@ const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
     loading: false,
   })
 
+  React.useEffect(() => {
+    // Load existing project groups
+    loadProjectGroups()
+  }, [])
+
+  const loadProjectGroups = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/api/users/project-groups`)
+      setState(prev => ({ 
+        ...prev, 
+        projectGroups: response.data.project_groups || ['default']
+      }))
+    } catch (err) {
+      console.error('Failed to load project groups:', err)
+    }
+  }
+
   const handleAuthSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setState(prev => ({ ...prev, loading: true, error: '' }))
 
     try {
+      // First, try ALM authentication
       const res = await authenticate(state.username, state.password)
       if (res.data.ok) {
+        // ALM authentication successful - now register/update user
+        try {
+          await axios.post(`${API_BASE}/api/users/register`, null, {
+            params: {
+              username: state.username,
+              password: state.password,
+              project_group: state.projectGroup
+            }
+          })
+        } catch (regErr) {
+          console.error('User registration failed:', regErr)
+          // Continue anyway if user exists
+        }
+
+        // Check if admin - skip domain/project selection
+        const role = state.username.toLowerCase() === 'admin' ? 'admin' : 'user'
+        if (role === 'admin') {
+          localStorage.setItem('user', state.username)
+          localStorage.setItem('role', 'admin')
+          localStorage.setItem('project_group', state.projectGroup)
+          onLogin('admin')
+          return
+        }
+
+        // Load domains for regular users
         const domainsRes = await getDomains(state.username)
         setState(prev => ({
           ...prev,
@@ -68,7 +118,7 @@ const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
     } catch (err: any) {
       setState(prev => ({
         ...prev,
-        error: err.response?.data?.detail || err.message || 'Connection error',
+        error: err.response?.data?.detail || 'Invalid username or password',
         loading: false,
       }))
     }
@@ -108,11 +158,39 @@ const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
     setState(prev => ({ ...prev, selectedProject: project }))
   }
 
-  const handleLogin = () => {
-    localStorage.setItem('user', state.username)
-    localStorage.setItem('domain', state.selectedDomain)
-    localStorage.setItem('project', state.selectedProject)
-    onLogin()
+  const handleLogin = async () => {
+    setState(prev => ({ ...prev, loading: true }))
+    
+    try {
+      // Call backend to load initial data (testplan, testlab, defects)
+      const response = await axios.post(`${API_BASE}/api/login`, {
+        username: state.username,
+        domain: state.selectedDomain,
+        project: state.selectedProject,
+        project_group: state.projectGroup
+      })
+      
+      console.log('Login successful:', response.data)
+      
+      // Store session data
+      localStorage.setItem('user', state.username)
+      localStorage.setItem('domain', state.selectedDomain)
+      localStorage.setItem('project', state.selectedProject)
+      localStorage.setItem('project_group', state.projectGroup)
+      
+      // Determine role
+      const role = state.username.toLowerCase() === 'admin' ? 'admin' : 'user'
+      localStorage.setItem('role', role)
+      
+      onLogin(role)
+    } catch (err: any) {
+      console.error('Login failed:', err)
+      setState(prev => ({
+        ...prev,
+        error: err.response?.data?.detail || 'Login failed. Please try again.',
+        loading: false
+      }))
+    }
   }
 
   return (
@@ -126,6 +204,10 @@ const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
 
             {state.step === 1 && (
               <form onSubmit={handleAuthSubmit}>
+                <Typography variant="h5" align="center" gutterBottom>
+                  Sign In
+                </Typography>
+                
                 <TextField
                   fullWidth
                   label="Username"
@@ -133,6 +215,7 @@ const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
                   value={state.username}
                   onChange={e => setState(prev => ({ ...prev, username: e.target.value }))}
                   disabled={state.loading}
+                  required
                 />
                 <TextField
                   fullWidth
@@ -142,7 +225,27 @@ const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
                   value={state.password}
                   onChange={e => setState(prev => ({ ...prev, password: e.target.value }))}
                   disabled={state.loading}
+                  required
                 />
+                
+                <FormControl fullWidth margin="normal">
+                  <Typography variant="body2" gutterBottom>
+                    Project Group
+                  </Typography>
+                  <Select
+                    value={state.projectGroup}
+                    onChange={(e) => setState(prev => ({ ...prev, projectGroup: e.target.value }))}
+                    disabled={state.loading}
+                  >
+                    {state.projectGroups.map((group) => (
+                      <MenuItem key={group} value={group}>
+                        {group}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  <FormHelperText>Select or use 'default' for new users</FormHelperText>
+                </FormControl>
+
                 {state.error && <FormHelperText error>{state.error}</FormHelperText>}
                 <Button
                   type="submit"
@@ -151,7 +254,7 @@ const LoginPage: React.FC<LoginProps> = ({ onLogin }) => {
                   sx={{ mt: 2 }}
                   disabled={state.loading}
                 >
-                  Sign In
+                  {state.loading ? 'Authenticating...' : 'Authenticate'}
                 </Button>
               </form>
             )}

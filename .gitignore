@@ -51,5 +51,6 @@ Thumbs.db
 desktop.ini
 
 # Database
+mongodb/
 mongodb_data/
-mongodb_data/
+mongodb_config/

@@ -5,13 +5,27 @@ from datetime import datetime
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Body, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import motor.motor_asyncio
 from typing import List, Optional, Dict, Any
+import asyncio
 from app.alm import ALM
 
-# Set up logger
+# Configure logging
+log_dir = Path(__file__).parent.parent.parent / 'logs'
+log_dir.mkdir(exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_dir / 'backend.log'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
+logger.info('Backend service starting...')
 
 # Load .env file
 env_path = Path(__file__).parent.parent / '.env'
@@ -63,6 +77,7 @@ class LoginRequest(BaseModel):
     username: str
     domain: str
     project: str
+    project_group: str = "default"
 
 
 class LogoutRequest(BaseModel):
@@ -150,6 +165,106 @@ async def api_authenticate(request: AuthenticateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get('/api/logs/{service}')
+async def get_logs(service: str, lines: int = 100):
+    """
+    Get recent logs from a service.
+    Services: backend, mock-alm, frontend
+    """
+    logger.info(f"Fetching {lines} lines from {service} logs")
+    
+    log_files = {
+        'backend': log_dir / 'backend.log',
+        'mock-alm': log_dir / 'mock-alm.log',
+        'frontend': log_dir / 'frontend.log'
+    }
+    
+    if service not in log_files:
+        raise HTTPException(status_code=400, detail=f"Invalid service. Choose from: {list(log_files.keys())}")
+    
+    log_file = log_files[service]
+    if not log_file.exists():
+        return {"logs": [], "message": f"Log file not found for {service}"}
+    
+    try:
+        with open(log_file, 'r', encoding='utf-8') as f:
+            all_lines = f.readlines()
+            recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+            return {"logs": recent_lines, "total": len(all_lines)}
+    except Exception as e:
+        logger.error(f"Error reading {service} logs: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get('/api/logs/{service}/stream')
+async def stream_logs(service: str, level: Optional[str] = None):
+    """
+    Stream logs from a service in real-time (SSE).
+    Optional level parameter filters logs by: ERROR, WARNING, INFO, DEBUG
+    """
+    logger.info(f"Starting log stream for {service} (level filter: {level})")
+    
+    log_files = {
+        'backend': log_dir / 'backend.log',
+        'mock-alm': log_dir / 'mock-alm.log',
+        'frontend': log_dir / 'frontend.log'
+    }
+    
+    if service not in log_files:
+        raise HTTPException(status_code=400, detail=f"Invalid service. Choose from: {list(log_files.keys())}")
+    
+    # Validate level parameter
+    valid_levels = ['ERROR', 'WARNING', 'INFO', 'DEBUG']
+    if level and level.upper() not in valid_levels:
+        raise HTTPException(status_code=400, detail=f"Invalid level. Choose from: {valid_levels}")
+    
+    level_filter = level.upper() if level else None
+    
+    log_file = log_files[service]
+    
+    def should_include_line(line: str) -> bool:
+        """Filter log line by level."""
+        if not level_filter:
+            return True
+        # Check if line contains the log level
+        # Format: "2024-12-07 10:30:45 - module - LEVEL - message"
+        return f" - {level_filter} - " in line or f"[{level_filter}]" in line
+    
+    async def log_generator():
+        # Send last 50 lines first (filtered)
+        if log_file.exists():
+            try:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    filtered_lines = [line for line in lines[-50:] if should_include_line(line)]
+                    for line in filtered_lines:
+                        yield f"data: {line}\n\n"
+            except Exception as e:
+                logger.error(f"Error reading initial logs: {e}")
+        
+        # Then stream new lines (filtered)
+        last_size = log_file.stat().st_size if log_file.exists() else 0
+        
+        while True:
+            try:
+                if log_file.exists():
+                    current_size = log_file.stat().st_size
+                    if current_size > last_size:
+                        with open(log_file, 'r', encoding='utf-8') as f:
+                            f.seek(last_size)
+                            new_lines = f.readlines()
+                            for line in new_lines:
+                                if should_include_line(line):
+                                    yield f"data: {line}\n\n"
+                        last_size = current_size
+                await asyncio.sleep(1)
+            except Exception as e:
+                logger.error(f"Error streaming logs: {e}")
+                await asyncio.sleep(1)
+    
+    return StreamingResponse(log_generator(), media_type="text/event-stream")
+
+
 @app.get('/api/get_domains')
 async def api_get_domains(username: str):
     """
@@ -194,38 +309,39 @@ async def api_login(request: LoginRequest):
     Complete login after domain/project selection, load initial tree data.
     
     Flow:
-    1. Store domain/project in user_credentials
-    2. Fetch root folders from ALM → store in testplan_folders → query from MongoDB
-    3. Fetch releases from ALM → store in testlab_releases → query from MongoDB
-    4. Fetch defects from ALM → store in defects → query from MongoDB
+    1. Store domain/project/project_group in user_credentials
+    2. Fetch root folders from ALM → store with project_group → query from MongoDB
+    3. Fetch releases from ALM → store with project_group → query from MongoDB
+    4. Fetch defects from ALM → store with project_group → query from MongoDB
     5. Mark user as logged_in=true
     6. Return counts from MongoDB queries
     """
     try:
-        # Store domain/project selection
+        # Store domain/project/project_group selection
         await db.user_credentials.update_one(
             {"user": request.username},
             {"$set": {
                 "domain": request.domain,
                 "project": request.project,
+                "project_group": request.project_group,
                 "logged_in": False  # Will be set to True after data load
             }},
             upsert=True
         )
         
-        # Fetch and store root folders
+        # Fetch and store root folders with project_group
         root_folders_result = await alm_client.fetch_and_store_root_folders(
-            request.username, request.domain, request.project
+            request.username, request.domain, request.project, request.project_group
         )
         
-        # Fetch and store releases
+        # Fetch and store releases with project_group
         releases_result = await alm_client.fetch_and_store_releases(
-            request.username, request.domain, request.project
+            request.username, request.domain, request.project, request.project_group
         )
         
-        # Fetch and store defects (first page)
+        # Fetch and store defects with project_group
         defects_result = await alm_client.fetch_and_store_defects(
-            request.username, request.domain, request.project, page_size=100
+            request.username, request.domain, request.project, request.project_group
         )
         
         # Mark user as logged in
@@ -234,10 +350,14 @@ async def api_login(request: LoginRequest):
             {"$set": {"logged_in": True}}
         )
         
-        # Query all data from MongoDB to return to frontend
+        # Query all data from MongoDB (filtered by user AND project_group)
         # TestPlan root folders
         testplan_folders = []
-        cursor = db.testplan_folders.find({"user": request.username, "parent_id": "0"})
+        cursor = db.testplan_folders.find({
+            "user": request.username, 
+            "project_group": request.project_group,
+            "parent_id": "0"
+        })
         async for f in cursor:
             testplan_folders.append({
                 "id": f.get("id"),
@@ -247,7 +367,10 @@ async def api_login(request: LoginRequest):
         
         # TestLab releases
         testlab_releases = []
-        cursor = db.testlab_releases.find({"user": request.username})
+        cursor = db.testlab_releases.find({
+            "user": request.username,
+            "project_group": request.project_group
+        })
         async for r in cursor:
             testlab_releases.append({
                 "id": r.get("id"),
@@ -257,18 +380,22 @@ async def api_login(request: LoginRequest):
         
         # Defects
         defects = []
-        cursor = db.defects.find({"user": request.username}).limit(100)
+        cursor = db.defects.find({
+            "user": request.username,
+            "project_group": request.project_group
+        }).limit(100)
         async for d in cursor:
-            # Extract key fields for display
+            # Extract key fields for display (fields are stored at top level)
             defect_data = {
                 "id": d.get("id"),
-                "name": d.get("name")
+                "name": d.get("name"),
+                "status": d.get("status"),
+                "severity": d.get("severity"),
+                "priority": d.get("priority"),
+                "detected-by": d.get("detected-by"),
+                "owner": d.get("owner"),
+                "creation-time": d.get("creation-time")
             }
-            # Extract important fields from fields array
-            for field in d.get("fields", []):
-                field_name = field.get("field")
-                if field_name in ["status", "severity", "priority", "detected-by", "owner", "creation-time"]:
-                    defect_data[field_name] = field.get("value")
             defects.append(defect_data)
         
         return {
@@ -299,6 +426,321 @@ async def api_logout(request: LogoutRequest):
 
 
 # ============================================================================
+# USER MANAGEMENT ENDPOINTS
+# ============================================================================
+
+@app.post('/api/users/register')
+async def register_user(username: str, password: str, project_group: str = "default"):
+    """Register a new user after successful ALM authentication."""
+    logger.info(f"Registering new user: {username} in project group: {project_group}")
+    
+    # Check if user already exists
+    existing = await db.users.find_one({"username": username})
+    if existing:
+        return {"success": True, "message": "User already exists", "role": existing.get("role", "user")}
+    
+    # Determine role
+    role = "admin" if username.lower() == "admin" else "user"
+    
+    new_user = {
+        "username": username,
+        "password": password,
+        "email": f"{username}@example.com",
+        "role": role,
+        "project_groups": [project_group] if project_group else [],
+        "created_at": datetime.utcnow()
+    }
+    
+    await db.users.insert_one(new_user)
+    logger.info(f"New user registered: {username} with role: {role}")
+    
+    return {"success": True, "message": "User registered", "role": role}
+
+
+@app.get('/api/users/profile')
+async def get_user_profile(username: str):
+    """Get user profile with role and project groups."""
+    logger.info(f"Fetching profile for user: {username}")
+    user = await db.users.find_one({"username": username})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {
+        "username": user.get("username"),
+        "email": user.get("email"),
+        "role": user.get("role", "user"),
+        "project_groups": user.get("project_groups", []),
+        "created_at": user.get("created_at")
+    }
+
+
+@app.post('/api/users/project-groups')
+async def add_user_project_group(username: str, project_group: str):
+    """Add a project group to user's list."""
+    logger.info(f"Adding project group '{project_group}' for user: {username}")
+    
+    result = await db.users.update_one(
+        {"username": username},
+        {"$addToSet": {"project_groups": project_group}}
+    )
+    
+    if result.modified_count == 0:
+        user = await db.users.find_one({"username": username})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return {"success": True, "message": "Project group already exists"}
+    
+    return {"success": True, "message": "Project group added"}
+
+
+@app.delete('/api/users/project-groups')
+async def remove_user_project_group(username: str, project_group: str):
+    """Remove a project group from user's list."""
+    logger.info(f"Removing project group '{project_group}' for user: {username}")
+    
+    result = await db.users.update_one(
+        {"username": username},
+        {"$pull": {"project_groups": project_group}}
+    )
+    
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="User or project group not found")
+    
+    return {"success": True, "message": "Project group removed"}
+
+
+@app.get('/api/users/project-groups')
+async def get_all_project_groups():
+    """Get all unique project groups across all users."""
+    logger.info("Fetching all project groups")
+    
+    pipeline = [
+        {"$unwind": "$project_groups"},
+        {"$group": {"_id": "$project_groups"}},
+        {"$sort": {"_id": 1}}
+    ]
+    
+    groups = []
+    async for doc in db.users.aggregate(pipeline):
+        groups.append(doc["_id"])
+    
+    # Always include 'default' if not present
+    if "default" not in groups:
+        groups.insert(0, "default")
+    
+    return {"project_groups": groups}
+
+
+@app.get('/api/admin/users')
+async def get_all_users(admin_username: str):
+    """Get all users (admin only)."""
+    logger.info(f"Admin {admin_username} requesting all users")
+    
+    # Check if requester is admin
+    admin = await db.users.find_one({"username": admin_username})
+    if not admin or admin.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    users = []
+    cursor = db.users.find({})
+    async for user in cursor:
+        users.append({
+            "username": user.get("username"),
+            "email": user.get("email"),
+            "role": user.get("role", "user"),
+            "project_groups": user.get("project_groups", []),
+            "created_at": user.get("created_at")
+        })
+    
+    return {"users": users}
+
+
+@app.put('/api/admin/users/role')
+async def update_user_role(admin_username: str, target_username: str, new_role: str):
+    """Update user role (admin only)."""
+    logger.info(f"Admin {admin_username} updating role for {target_username} to {new_role}")
+    
+    # Check if requester is admin
+    admin = await db.users.find_one({"username": admin_username})
+    if not admin or admin.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Validate role
+    if new_role not in ["user", "admin"]:
+        raise HTTPException(status_code=400, detail="Invalid role. Must be 'user' or 'admin'")
+    
+    # Don't allow changing own role
+    if admin_username == target_username:
+        raise HTTPException(status_code=400, detail="Cannot change your own role")
+    
+    result = await db.users.update_one(
+        {"username": target_username},
+        {"$set": {"role": new_role}}
+    )
+    
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {"success": True, "message": f"User role updated to {new_role}"}
+
+
+@app.delete('/api/admin/users/data')
+async def clean_user_data(admin_username: str, target_username: str, project_group: Optional[str] = None):
+    """Clean all data for a specific user or user+project_group (admin only)."""
+    if project_group:
+        logger.info(f"Admin {admin_username} cleaning data for user: {target_username}, project_group: {project_group}")
+    else:
+        logger.info(f"Admin {admin_username} cleaning ALL data for user: {target_username}")
+    
+    # Check if requester is admin
+    admin = await db.users.find_one({"username": admin_username})
+    if not admin or admin.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Don't allow cleaning own data
+    if admin_username == target_username:
+        raise HTTPException(status_code=400, detail="Cannot clean your own data")
+    
+    # Collections that store user data with project_group
+    project_group_collections = [
+        'domains', 'projects', 'testplan_folders', 'testplan_tests',
+        'testlab_releases', 'testlab_release_cycles', 'testlab_testsets', 'testlab_testruns',
+        'defects', 'attachments', 'design_steps',
+        'testplan_test_details', 'testplan_extraction_results',
+        'testlab_testset_details', 'testlab_extraction_results',
+        'defect_details', 'attachment_cache'
+    ]
+    
+    # Collections that only store user (no project_group)
+    user_only_collections = ['user_credentials']
+    
+    deleted_counts = {}
+    
+    # Build filter
+    if project_group:
+        # Clean only data for this specific project_group
+        filter_query = {"user": target_username, "project_group": project_group}
+        for collection_name in project_group_collections:
+            collection = db[collection_name]
+            result = await collection.delete_many(filter_query)
+            deleted_counts[collection_name] = result.deleted_count
+    else:
+        # Clean ALL data for this user including the user itself
+        filter_query = {"user": target_username}
+        for collection_name in project_group_collections + user_only_collections:
+            collection = db[collection_name]
+            result = await collection.delete_many(filter_query)
+            deleted_counts[collection_name] = result.deleted_count
+        
+        # Delete the user from users collection
+        user_result = await db.users.delete_one({"username": target_username})
+        deleted_counts['users'] = user_result.deleted_count
+    
+    logger.info(f"Cleaned data for {target_username} (project_group={project_group}): {deleted_counts}")
+    
+    return {
+        "success": True,
+        "message": f"Data cleaned for user {target_username}" + (f" in project group {project_group}" if project_group else " (all data and user account deleted)"),
+        "deleted_counts": deleted_counts
+    }
+
+
+@app.get('/api/admin/db/stats')
+async def get_db_stats(admin_username: str):
+    """
+    Get database statistics (collection counts and sizes).
+    Admin only endpoint.
+    """
+    admin_user = await db.users.find_one({"username": admin_username})
+    if not admin_user or admin_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        collections = [
+            'users', 'user_credentials', 'domains', 'projects',
+            'testplan_folders', 'testplan_tests', 'testplan_test_details',
+            'testplan_extraction_results', 'design_steps',
+            'testlab_releases', 'testlab_release_cycles', 'testlab_testsets',
+            'testlab_testruns', 'testlab_testset_details', 'testlab_extraction_results',
+            'defects', 'defect_details', 'attachments', 'attachment_cache'
+        ]
+        
+        collection_stats = {}
+        total_documents = 0
+        total_size = 0
+        
+        for collection_name in collections:
+            collection = db[collection_name]
+            count = await collection.count_documents({})
+            
+            # Get collection stats
+            stats = await db.command("collStats", collection_name)
+            size = stats.get("size", 0)
+            
+            collection_stats[collection_name] = {
+                "count": count,
+                "size": size
+            }
+            
+            total_documents += count
+            total_size += size
+        
+        return {
+            "success": True,
+            "collections": collection_stats,
+            "total_documents": total_documents,
+            "total_size": total_size
+        }
+    except Exception as e:
+        logger.error(f"Error getting database stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete('/api/admin/db/clean-all')
+async def clean_all_data(admin_username: str):
+    """
+    Clean ALL data from the database (except admin users).
+    Admin only endpoint - use with extreme caution!
+    """
+    admin_user = await db.users.find_one({"username": admin_username})
+    if not admin_user or admin_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        collections_to_clean = [
+            'user_credentials', 'domains', 'projects',
+            'testplan_folders', 'testplan_tests', 'testplan_test_details',
+            'testplan_extraction_results', 'design_steps',
+            'testlab_releases', 'testlab_release_cycles', 'testlab_testsets',
+            'testlab_testruns', 'testlab_testset_details', 'testlab_extraction_results',
+            'defects', 'defect_details', 'attachments', 'attachment_cache'
+        ]
+        
+        deleted_counts = {}
+        
+        # Delete all documents from each collection
+        for collection_name in collections_to_clean:
+            collection = db[collection_name]
+            result = await collection.delete_many({})
+            deleted_counts[collection_name] = result.deleted_count
+        
+        # Delete all non-admin users
+        user_result = await db.users.delete_many({"role": {"$ne": "admin"}})
+        deleted_counts['users'] = user_result.deleted_count
+        
+        logger.warning(f"Admin {admin_username} cleaned ALL database data: {deleted_counts}")
+        
+        return {
+            "success": True,
+            "message": "All data cleaned successfully",
+            "deleted_counts": deleted_counts
+        }
+    except Exception as e:
+        logger.error(f"Error cleaning all data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # OLD ENDPOINTS (to be deprecated)
 # ============================================================================
 
@@ -316,10 +758,16 @@ async def authenticate(payload: AuthRequest):
         # Fallback to local authentication for demo
         user = await db.users.find_one({"username": payload.username})
         if not user:
+            # Do NOT create user here - only after ALM authentication
             raise HTTPException(status_code=401, detail='Invalid username or password')
         if user.get('password') != payload.password:
             raise HTTPException(status_code=401, detail='Invalid username or password')
-        return {"ok": True, "message": "Authenticated"}
+        return {
+            "ok": True, 
+            "message": "Authenticated", 
+            "role": user.get("role", "user"),
+            "project_groups": user.get("project_groups", [])
+        }
 
 
 @app.get('/domains')
@@ -1474,17 +1922,21 @@ async def get_defects(
         Dict with defects array and total count
     """
     try:
+        # Get project_group from user_credentials
+        user_creds = await db.user_credentials.find_one({"user": username})
+        project_group = user_creds.get("project_group", "default") if user_creds else "default"
+        
         # Fetch fresh data from ALM and store in MongoDB
         await alm_client.fetch_and_store_defects(
-            username, domain, project, 
+            username, domain, project, project_group,
             start_index=start_index, 
             page_size=page_size,
             query_filter=query_filter
         )
         
-        # Query from MongoDB
+        # Query from MongoDB with project_group filter
         cursor = db.defects.find(
-            {"user": username},
+            {"user": username, "project_group": project_group},
             skip=start_index - 1,
             limit=page_size
         )
@@ -1492,7 +1944,7 @@ async def get_defects(
         async for d in cursor:
             d.pop("_id", None)
             # Build defect data from top-level fields (fields array will be removed)
-            excluded_fields = ["user", "parent_id", "entity_type", "fields"]
+            excluded_fields = ["user", "project_group", "parent_id", "entity_type", "fields"]
             defect_data = {}
             for key, value in d.items():
                 if key not in excluded_fields and value is not None:
@@ -1500,7 +1952,7 @@ async def get_defects(
             
             defects.append(defect_data)
         
-        total = await db.defects.count_documents({"user": username})
+        total = await db.defects.count_documents({"user": username, "project_group": project_group})
         return {"defects": defects, "total": total}
         
     except Exception as e:

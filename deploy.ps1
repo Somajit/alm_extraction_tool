@@ -5,8 +5,23 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "ALM Extraction Tool - Full Deployment" -ForegroundColor Cyan
 Write-Host "========================================`n" -ForegroundColor Cyan
 
+# Update backend/.env for Docker deployment
+Write-Host "[1/6] Updating backend/.env for Docker..." -ForegroundColor Yellow
+$envContent = @"
+MONGO_URI=mongodb://mongodb:27017/releasecraftdb
+CORS_ORIGINS=http://localhost:5173
+ALM_URL=http://mock-alm:8001
+MOCK_ALM_URL=http://mock-alm:8001
+USE_MOCK_ALM=true
+SECRET_KEY=your-secret-key-change-in-production
+"@
+Set-Content -Path "backend\.env" -Value $envContent
+Write-Host "✓ Environment configured for Docker`n" -ForegroundColor Green
+
 # Stop all containers
-Write-Host "[1/5] Stopping all containers..." -ForegroundColor Yellow
+Write-Host "[2/6] Stopping all containers..." -ForegroundColor Yellow
+# Stop all containers
+Write-Host "[2/6] Stopping all containers..." -ForegroundColor Yellow
 docker-compose down
 if ($LASTEXITCODE -ne 0) {
     Write-Host "✗ Failed to stop containers" -ForegroundColor Red
@@ -15,7 +30,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "✓ Containers stopped`n" -ForegroundColor Green
 
 # Build frontend locally first (faster and better error reporting)
-Write-Host "[2/5] Building frontend assets..." -ForegroundColor Yellow
+Write-Host "[3/6] Building frontend assets..." -ForegroundColor Yellow
 Set-Location frontend
 npm run build
 if ($LASTEXITCODE -ne 0) {
@@ -27,7 +42,7 @@ Set-Location ..
 Write-Host "✓ Frontend built successfully`n" -ForegroundColor Green
 
 # Build all Docker images
-Write-Host "[3/5] Building Docker images..." -ForegroundColor Yellow
+Write-Host "[4/6] Building Docker images..." -ForegroundColor Yellow
 docker-compose build
 if ($LASTEXITCODE -ne 0) {
     Write-Host "✗ Docker build failed" -ForegroundColor Red
@@ -36,7 +51,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "✓ Docker images built`n" -ForegroundColor Green
 
 # Start all services
-Write-Host "[4/5] Starting all services..." -ForegroundColor Yellow
+Write-Host "[5/6] Starting all services..." -ForegroundColor Yellow
 docker-compose up -d
 if ($LASTEXITCODE -ne 0) {
     Write-Host "✗ Failed to start services" -ForegroundColor Red
@@ -45,7 +60,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "✓ Services started`n" -ForegroundColor Green
 
 # Wait for services to be ready
-Write-Host "[5/5] Waiting for services to be ready..." -ForegroundColor Yellow
+Write-Host "[6/6] Waiting for services to be ready..." -ForegroundColor Yellow
 Start-Sleep -Seconds 5
 
 # Check service status

@@ -496,7 +496,8 @@ class ALMConfig:
     
     @staticmethod
     def parse_alm_response_to_entity(endpoint_name: str, response_data: Dict, 
-                                      username: str, parent_id: Optional[str] = None) -> Dict:
+                                      username: str, parent_id: Optional[str] = None,
+                                      project_group: str = "default") -> Dict:
         """
         Parse ALM API response and convert to standardized entity format.
         
@@ -537,6 +538,7 @@ class ALMConfig:
         # Build standardized entity
         entity = {
             "user": username,
+            "project_group": project_group,
             "id": field_values.get("id", ""),
             "name": field_values.get("name", ""),
             "parent_id": parent_id or field_values.get("parent-id", None),

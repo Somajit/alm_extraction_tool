@@ -176,8 +176,8 @@ export const authApi = {
    * Complete login after domain/project selection, load initial tree data
    * Flow: Store selection → Fetch root folders, releases, defects → Store all → Return counts
    */
-  login: (username: string, domain: string, project: string): Promise<AxiosResponse<LoginResponse>> =>
-    api.post('/api/login', { username, domain, project }),
+  login: (username: string, domain: string, project: string, project_group: string = 'default'): Promise<AxiosResponse<LoginResponse>> =>
+    api.post('/api/login', { username, domain, project, project_group }),
 
   /**
    * Logout from ALM server

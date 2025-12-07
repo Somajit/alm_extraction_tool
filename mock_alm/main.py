@@ -8,6 +8,23 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import re
+import logging
+from pathlib import Path
+
+# Configure logging
+log_dir = Path(__file__).parent.parent / 'logs'
+log_dir.mkdir(exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_dir / 'mock-alm.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+logger.info('Mock ALM service starting...')
 
 app = FastAPI(title="Mock ALM API")
 
@@ -61,25 +78,31 @@ def make_list_response(entity_type: str, entities: List[Dict[str, Any]]) -> Dict
 @app.post("/authentication-point/authenticate")
 def authenticate(request: Request):
     """Mock authentication endpoint - Step 1: Set LWSSO cookie only"""
+    logger.info("Authentication request received")
     resp = PlainTextResponse("OK")
     resp.set_cookie("LWSSO_COOKIE_KEY", "mock-lwsso-token", path="/")
+    logger.info("Authentication successful")
     return resp
 
 @app.post("/qcbin/rest/site-session")
 @app.post("/rest/site-session")
 def site_session(request: Request):
     """Mock site session endpoint - Step 2: Set QC session cookies"""
+    logger.info("Site session request received")
     resp = PlainTextResponse("SITE-SESSION-OK")
     resp.set_cookie("QCSession", "mock-session-id", path="/")
     resp.set_cookie("ALM_USER", "testuser", path="/")
     resp.set_cookie("XSRF-TOKEN", "mock-xsrf-token", path="/")
+    logger.info("Site session created")
     return resp
 
 @app.get("/qcbin/rest/domains")
 @app.get("/rest/domains")
 def get_domains(request: Request):
     """Return mock domains in ALM format"""
+    logger.info("Get domains request received")
     if not validate_cookies(request):
+        logger.warning("Domains request without valid cookies")
         raise HTTPException(status_code=401, detail="Authentication required")
     
     # Return domains in proper ALM entities format
@@ -90,6 +113,7 @@ def get_domains(request: Request):
         {"id": "TESTDOMAIN", "name": "TESTDOMAIN"}
     ]
     
+    logger.info(f"Returning {len(domains)} domains")
     return JSONResponse(content=simple_to_alm(domains, entity_type="domain"))
 
 @app.get("/qcbin/rest/domains/{domain}/projects")
