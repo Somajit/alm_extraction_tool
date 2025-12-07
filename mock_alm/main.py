@@ -4,7 +4,7 @@ Simplified Mock ALM Server for Testing
 
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Request, Query, HTTPException
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import re
@@ -74,26 +74,52 @@ def make_list_response(entity_type: str, entities: List[Dict[str, Any]]) -> Dict
     }
 
 # Authentication endpoints
-@app.post("/qcbin/authentication-point/authenticate")
-@app.post("/authentication-point/authenticate")
+@app.get("/qcbin/authentication-point/authenticate")
+@app.get("/authentication-point/authenticate")
 def authenticate(request: Request):
-    """Mock authentication endpoint - Step 1: Set LWSSO cookie only"""
+    """Mock authentication endpoint - Step 1: Accept Basic Auth, return JSON with LWSSO cookie"""
     logger.info("Authentication request received")
-    resp = PlainTextResponse("OK")
+    
+    # Check for Basic Auth header (optional in mock)
+    auth_header = request.headers.get("authorization", "")
+    accept_header = request.headers.get("accept", "")
+    
+    logger.info(f"Auth headers - Authorization: {bool(auth_header)}, Accept: {accept_header}")
+    
+    # Return JSON response as per real ALM
+    resp = JSONResponse(content={"success": True, "message": "Authenticated"})
     resp.set_cookie("LWSSO_COOKIE_KEY", "mock-lwsso-token", path="/")
     logger.info("Authentication successful")
     return resp
 
 @app.post("/qcbin/rest/site-session")
 @app.post("/rest/site-session")
-def site_session(request: Request):
-    """Mock site session endpoint - Step 2: Set QC session cookies"""
+async def site_session(request: Request):
+    """Mock site session endpoint - Step 2: Accept XML content, return XML with all cookies"""
     logger.info("Site session request received")
-    resp = PlainTextResponse("SITE-SESSION-OK")
+    
+    # Check headers
+    accept_header = request.headers.get("accept", "")
+    content_type = request.headers.get("content-type", "")
+    cookie_header = request.headers.get("cookie", "")
+    
+    logger.info(f"Session headers - Accept: {accept_header}, Content-Type: {content_type}, Has LWSSO: {'LWSSO_COOKIE_KEY' in cookie_header}")
+    
+    # Read and log body (should be XML with client-type)
+    body = await request.body()
+    logger.info(f"Session body: {body.decode('utf-8') if body else 'empty'}")
+    
+    # Return XML response as per real ALM
+    resp = Response(
+        content='<?xml version="1.0" encoding="UTF-8"?><session><session-id>mock-session-id</session-id></session>',
+        media_type="application/xml"
+    )
     resp.set_cookie("QCSession", "mock-session-id", path="/")
     resp.set_cookie("ALM_USER", "testuser", path="/")
     resp.set_cookie("XSRF-TOKEN", "mock-xsrf-token", path="/")
-    logger.info("Site session created")
+    # LWSSO might be refreshed
+    resp.set_cookie("LWSSO_COOKIE_KEY", "mock-lwsso-token-refreshed", path="/")
+    logger.info("Site session created with all 4 cookies")
     return resp
 
 @app.get("/qcbin/api/domains")
@@ -529,22 +555,101 @@ def get_design_steps(
     
     return JSONResponse(content=make_list_response("design-step", steps))
 
+@app.get("/qcbin/rest/domains/{domain}/projects/{project}/release-folders")
+@app.get("/rest/domains/{domain}/projects/{project}/release-folders")
+def get_release_folders(
+    domain: str,
+    project: str,
+    request: Request,
+    query: Optional[str] = Query(None)
+):
+    """Return mock release folders in ALM entity format"""
+    if not validate_cookies(request):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Parse parent_id from query parameter (format: parent-id[123])
+    parent_id = "0"  # Default to root
+    if query:
+        import re
+        match = re.search(r'parent-id\[([^\]]+)\]', query)
+        if match:
+            parent_id = match.group(1)
+    
+    # Mock hierarchical folder structure
+    if parent_id == "0":
+        # Root level folders
+        folders = [
+            {"id": "2001", "name": "Planning", "parent-id": "0", "description": "Planning phase releases"},
+            {"id": "2002", "name": "Development", "parent-id": "0", "description": "Development phase releases"},
+            {"id": "2003", "name": "QA", "parent-id": "0", "description": "QA phase releases"}
+        ]
+    elif parent_id == "2001":
+        # Subfolders under Planning
+        folders = [
+            {"id": "2011", "name": "Q1 Planning", "parent-id": "2001", "description": "Q1 planning releases"},
+            {"id": "2012", "name": "Q2 Planning", "parent-id": "2001", "description": "Q2 planning releases"}
+        ]
+    elif parent_id == "2002":
+        # Subfolders under Development
+        folders = [
+            {"id": "2021", "name": "Sprint 1", "parent-id": "2002", "description": "Sprint 1 releases"},
+            {"id": "2022", "name": "Sprint 2", "parent-id": "2002", "description": "Sprint 2 releases"}
+        ]
+    else:
+        # No more subfolders
+        folders = []
+    
+    return JSONResponse(content=make_list_response("release-folder", folders))
+
 @app.get("/qcbin/rest/domains/{domain}/projects/{project}/releases")
 @app.get("/rest/domains/{domain}/projects/{project}/releases")
 def get_releases(
     domain: str,
     project: str,
-    request: Request
+    request: Request,
+    query: Optional[str] = Query(None)
 ):
     """Return mock releases in ALM entity format"""
     if not validate_cookies(request):
         raise HTTPException(status_code=401, detail="Authentication required")
     
-    releases = [
-        {"id": "1001", "name": "Release 1.0", "start-date": "2024-01-01", "end-date": "2024-03-31"},
-        {"id": "1002", "name": "Release 2.0", "start-date": "2024-04-01", "end-date": "2024-06-30"},
-        {"id": "1003", "name": "Release 3.0", "start-date": "2024-07-01", "end-date": "2024-09-30"}
-    ]
+    # Parse parent_id from query parameter (format: parent-id[123])
+    parent_id = None
+    if query:
+        import re
+        match = re.search(r'parent-id\[([^\]]+)\]', query)
+        if match:
+            parent_id = match.group(1)
+    
+    # Return releases based on parent folder
+    if parent_id == "2001":
+        # Releases in Planning folder
+        releases = [
+            {"id": "1001", "name": "Planning Release 1.0", "parent-id": "2001", "start-date": "2024-01-01", "end-date": "2024-03-31"},
+        ]
+    elif parent_id == "2002":
+        # Releases in Development folder
+        releases = [
+            {"id": "1002", "name": "Dev Release 2.0", "parent-id": "2002", "start-date": "2024-04-01", "end-date": "2024-06-30"},
+        ]
+    elif parent_id == "2011":
+        # Releases in Q1 Planning subfolder
+        releases = [
+            {"id": "1011", "name": "Q1 Release 1.1", "parent-id": "2011", "start-date": "2024-01-01", "end-date": "2024-03-31"},
+        ]
+    elif parent_id == "2021":
+        # Releases in Sprint 1 subfolder
+        releases = [
+            {"id": "1021", "name": "Sprint 1 Release", "parent-id": "2021", "start-date": "2024-04-01", "end-date": "2024-04-30"},
+        ]
+    else:
+        # Default releases if no parent_id specified
+        releases = [
+            {"id": "1001", "name": "Release 1.0", "parent-id": "0", "start-date": "2024-01-01", "end-date": "2024-03-31"},
+            {"id": "1002", "name": "Release 2.0", "parent-id": "0", "start-date": "2024-04-01", "end-date": "2024-06-30"},
+            {"id": "1003", "name": "Release 3.0", "parent-id": "0", "start-date": "2024-07-01", "end-date": "2024-09-30"}
+        ]
+    
     return JSONResponse(content=make_list_response("release", releases))
 
 @app.get("/qcbin/rest/domains/{domain}/projects/{project}/release-cycles")
@@ -566,19 +671,26 @@ def get_release_cycles(
         if match:
             parent_id = match.group(1)
     
-    # All cycles across all releases
+    # All cycles across all releases (including folder-based releases)
     all_cycles = [
-        # Release 1.0 cycles
-        {"id": "2001", "name": "Sprint 1", "parent-id": "1001", "start-date": "2024-01-01", "end-date": "2024-01-31"},
-        {"id": "2002", "name": "Sprint 2", "parent-id": "1001", "start-date": "2024-02-01", "end-date": "2024-02-29"},
-        {"id": "2003", "name": "Sprint 3", "parent-id": "1001", "start-date": "2024-03-01", "end-date": "2024-03-31"},
-        # Release 2.0 cycles
-        {"id": "2004", "name": "Sprint 4", "parent-id": "1002", "start-date": "2024-04-01", "end-date": "2024-04-30"},
-        {"id": "2005", "name": "Sprint 5", "parent-id": "1002", "start-date": "2024-05-01", "end-date": "2024-05-31"},
-        {"id": "2006", "name": "Sprint 6", "parent-id": "1002", "start-date": "2024-06-01", "end-date": "2024-06-30"},
-        # Release 3.0 cycles
-        {"id": "2007", "name": "Sprint 7", "parent-id": "1003", "start-date": "2024-07-01", "end-date": "2024-07-31"},
-        {"id": "2008", "name": "Sprint 8", "parent-id": "1003", "start-date": "2024-08-01", "end-date": "2024-08-31"},
+        # Planning Release 1.0 (parent-id: 2001 folder) cycles
+        {"id": "3001", "name": "Planning Cycle 1", "parent-id": "1001", "start-date": "2024-01-01", "end-date": "2024-01-31"},
+        {"id": "3002", "name": "Planning Cycle 2", "parent-id": "1001", "start-date": "2024-02-01", "end-date": "2024-02-29"},
+        {"id": "3003", "name": "Planning Cycle 3", "parent-id": "1001", "start-date": "2024-03-01", "end-date": "2024-03-31"},
+        # Dev Release 2.0 (parent-id: 2002 folder) cycles
+        {"id": "3004", "name": "Dev Cycle 1", "parent-id": "1002", "start-date": "2024-04-01", "end-date": "2024-04-30"},
+        {"id": "3005", "name": "Dev Cycle 2", "parent-id": "1002", "start-date": "2024-05-01", "end-date": "2024-05-31"},
+        {"id": "3006", "name": "Dev Cycle 3", "parent-id": "1002", "start-date": "2024-06-01", "end-date": "2024-06-30"},
+        # Q1 Release 1.1 (parent-id: 2011 subfolder) cycles
+        {"id": "3011", "name": "Q1 Cycle 1", "parent-id": "1011", "start-date": "2024-01-01", "end-date": "2024-01-31"},
+        {"id": "3012", "name": "Q1 Cycle 2", "parent-id": "1011", "start-date": "2024-02-01", "end-date": "2024-02-28"},
+        # Sprint 1 Release (parent-id: 2021 subfolder) cycles
+        {"id": "3021", "name": "Sprint 1 Cycle 1", "parent-id": "1021", "start-date": "2024-04-01", "end-date": "2024-04-15"},
+        {"id": "3022", "name": "Sprint 1 Cycle 2", "parent-id": "1021", "start-date": "2024-04-16", "end-date": "2024-04-30"},
+        # Legacy releases (no folder parent) cycles
+        {"id": "3101", "name": "Release 1.0 Cycle 1", "parent-id": "1001", "start-date": "2024-01-01", "end-date": "2024-01-31"},
+        {"id": "3102", "name": "Release 2.0 Cycle 1", "parent-id": "1002", "start-date": "2024-04-01", "end-date": "2024-04-30"},
+        {"id": "3103", "name": "Release 3.0 Cycle 1", "parent-id": "1003", "start-date": "2024-07-01", "end-date": "2024-07-31"},
     ]
     
     # Filter by parent-id if provided
@@ -608,29 +720,32 @@ def get_test_sets(
         if match:
             parent_id = match.group(1)
     
-    # All test sets across all cycles
+    # All test sets across all cycles (matching new cycle structure)
     all_test_sets = [
-        # Sprint 1 test sets
-        {"id": "3001", "name": "Regression Test Set", "parent-id": "2001", "status": "Passed"},
-        {"id": "3002", "name": "Smoke Test Set", "parent-id": "2001", "status": "Passed"},
-        # Sprint 2 test sets
-        {"id": "3003", "name": "Integration Test Set", "parent-id": "2002", "status": "Failed"},
-        {"id": "3004", "name": "Performance Test Set", "parent-id": "2002", "status": "Passed"},
-        # Sprint 3 test sets
-        {"id": "3005", "name": "UI Test Set", "parent-id": "2003", "status": "Passed"},
-        {"id": "3006", "name": "API Test Set", "parent-id": "2003", "status": "Passed"},
-        # Sprint 4 test sets
-        {"id": "3007", "name": "Security Test Set", "parent-id": "2004", "status": "Passed"},
-        {"id": "3008", "name": "End-to-End Test Set", "parent-id": "2004", "status": "In Progress"},
-        # Sprint 5 test sets
-        {"id": "3009", "name": "Mobile Test Set", "parent-id": "2005", "status": "Passed"},
-        {"id": "3010", "name": "Cross-Browser Test Set", "parent-id": "2005", "status": "Failed"},
-        # Sprint 6 test sets
-        {"id": "3011", "name": "Accessibility Test Set", "parent-id": "2006", "status": "Passed"},
-        # Sprint 7 test sets
-        {"id": "3012", "name": "Load Test Set", "parent-id": "2007", "status": "Passed"},
-        # Sprint 8 test sets
-        {"id": "3013", "name": "Database Test Set", "parent-id": "2008", "status": "Not Started"},
+        # Planning Cycle 1 test sets
+        {"id": "4001", "name": "Planning Regression Test Set", "parent-id": "3001", "status": "Passed"},
+        {"id": "4002", "name": "Planning Smoke Test Set", "parent-id": "3001", "status": "Passed"},
+        # Planning Cycle 2 test sets
+        {"id": "4003", "name": "Planning Integration Test Set", "parent-id": "3002", "status": "Failed"},
+        {"id": "4004", "name": "Planning API Test Set", "parent-id": "3002", "status": "Passed"},
+        # Dev Cycle 1 test sets
+        {"id": "4005", "name": "Dev UI Test Set", "parent-id": "3004", "status": "Passed"},
+        {"id": "4006", "name": "Dev Security Test Set", "parent-id": "3004", "status": "Passed"},
+        # Dev Cycle 2 test sets
+        {"id": "4007", "name": "Dev Performance Test Set", "parent-id": "3005", "status": "Passed"},
+        {"id": "4008", "name": "Dev Load Test Set", "parent-id": "3005", "status": "In Progress"},
+        # Q1 Cycle 1 test sets
+        {"id": "4011", "name": "Q1 Regression Test Set", "parent-id": "3011", "status": "Passed"},
+        {"id": "4012", "name": "Q1 Smoke Test Set", "parent-id": "3011", "status": "Passed"},
+        # Sprint 1 Cycle 1 test sets
+        {"id": "4021", "name": "Sprint 1 Integration Test Set", "parent-id": "3021", "status": "Passed"},
+        {"id": "4022", "name": "Sprint 1 E2E Test Set", "parent-id": "3021", "status": "Failed"},
+        # Sprint 1 Cycle 2 test sets
+        {"id": "4023", "name": "Sprint 1 Mobile Test Set", "parent-id": "3022", "status": "Passed"},
+        # Legacy release cycles test sets
+        {"id": "4101", "name": "Legacy Test Set 1", "parent-id": "3101", "status": "Passed"},
+        {"id": "4102", "name": "Legacy Test Set 2", "parent-id": "3102", "status": "Passed"},
+        {"id": "4103", "name": "Legacy Test Set 3", "parent-id": "3103", "status": "Not Started"},
     ]
     
     # Filter by parent-id if provided

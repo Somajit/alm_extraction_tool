@@ -174,6 +174,7 @@ class ALM:
             "projects": self.db.projects,
             "test-folders": self.db.testplan_folders,
             "tests": self.db.testplan_tests,
+            "release-folders": self.db.testlab_release_folders,
             "releases": self.db.testlab_releases,
             "release-cycles": self.db.testlab_release_cycles,
             "test-sets": self.db.testlab_testsets,
@@ -227,31 +228,50 @@ class ALM:
     async def authenticate(self, username: str, password: str) -> Dict[str, Any]:
         """Authenticate with ALM and store credentials."""
         try:
-            # Step 1: LWSSO authentication
-            auth_url = f"{self.base_url}/authentication-point/authenticate"
-            async with httpx.AsyncClient(verify=False) as client:
-                auth_response = await client.post(
+            async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+                # Step 1: LWSSO authentication using Basic Auth
+                auth_url = f"{self.base_url}/authentication-point/authenticate"
+                auth_response = await client.get(
                     auth_url,
-                    headers={"Content-Type": "application/xml"},
-                    content=f"<alm-authentication><user>{username}</user><password>{password}</password></alm-authentication>"
+                    auth=(username, password),  # Basic Auth
+                    headers={"Accept": "application/json"}
                 )
                 
                 if auth_response.status_code != 200:
-                    return {"success": False, "message": "Authentication failed"}
+                    return {"success": False, "message": f"Authentication failed: {auth_response.status_code}"}
                 
                 self.lwsso_cookie = auth_response.cookies.get("LWSSO_COOKIE_KEY")
+                if not self.lwsso_cookie:
+                    return {"success": False, "message": "Failed to get LWSSO_COOKIE_KEY"}
                 
-                # Step 2: Site session
+                # Step 2: Site session with XML content and LWSSO cookie
                 session_url = f"{self.base_url}/rest/site-session"
+                session_content = '<session-parameters><client-type>REST-MobileQA-MyTIAAMobile</client-type></session-parameters>'
                 session_response = await client.post(
                     session_url,
-                    headers={"Cookie": f"LWSSO_COOKIE_KEY={self.lwsso_cookie}"}
+                    headers={
+                        "Accept": "application/xml",
+                        "Content-Type": "application/xml",
+                        "Cookie": f"LWSSO_COOKIE_KEY={self.lwsso_cookie}"
+                    },
+                    content=session_content
                 )
                 
+                if session_response.status_code != 200 and session_response.status_code != 201:
+                    return {"success": False, "message": f"Site session failed: {session_response.status_code}"}
+                
+                # Retrieve all 4 cookies from session response
                 self.qc_session_cookie = session_response.cookies.get("QCSession")
                 self.alm_user_cookie = session_response.cookies.get("ALM_USER")
                 self.xsrf_token = session_response.cookies.get("XSRF-TOKEN")
+                
+                # LWSSO_COOKIE_KEY might also be refreshed
+                if "LWSSO_COOKIE_KEY" in session_response.cookies:
+                    self.lwsso_cookie = session_response.cookies["LWSSO_COOKIE_KEY"]
+                
                 self.is_authenticated = True
+                
+                logger.info(f"Authentication successful for {username}. Cookies: LWSSO={bool(self.lwsso_cookie)}, QCSession={bool(self.qc_session_cookie)}, ALM_USER={bool(self.alm_user_cookie)}, XSRF={bool(self.xsrf_token)}")
             
             # Store encrypted credentials
             encrypted_pwd = self.cipher.encrypt(password.encode()).decode()
@@ -290,6 +310,8 @@ class ALM:
             self.is_authenticated = False
             self.lwsso_cookie = None
             self.qc_session_cookie = None
+            self.alm_user_cookie = None
+            self.xsrf_token = None
             return {"success": True, "message": "Logged out"}
         except Exception as e:
             return {"success": False, "message": str(e)}
@@ -369,13 +391,17 @@ class ALM:
         return result
         return result
     
-    async def fetch_and_store_root_folders(self, username: str, domain: str, project: str, project_group: str = "default") -> Dict[str, Any]:
-        """Fetch root test folders using generic engine."""
+    async def fetch_and_store_root_test_folders(self, username: str, domain: str, project: str, project_group: str = "default") -> Dict[str, Any]:
+        """Fetch root test folders (parent_id=0) using generic engine."""
         return await self.fetch_and_store("test-folders", username, domain, project, project_group, parent_id="0")
     
-    async def fetch_and_store_releases(self, username: str, domain: str, project: str, project_group: str = "default") -> Dict[str, Any]:
+    async def fetch_and_store_root_release_folders(self, username: str, domain: str, project: str, project_group: str = "default") -> Dict[str, Any]:
+        """Fetch root release folders (parent_id=0) using generic engine."""
+        return await self.fetch_and_store("release-folders", username, domain, project, project_group, parent_id="0")
+    
+    async def fetch_and_store_releases(self, username: str, domain: str, project: str, project_group: str = "default", parent_id: Optional[str] = None) -> Dict[str, Any]:
         """Fetch releases using generic engine."""
-        return await self.fetch_and_store("releases", username, domain, project, project_group)
+        return await self.fetch_and_store("releases", username, domain, project, project_group, parent_id=parent_id)
     
     async def fetch_and_store_defects(self, username: str, domain: str, project: str, project_group: str = "default", **kwargs) -> Dict[str, Any]:
         """Fetch defects using generic engine."""
@@ -405,6 +431,18 @@ class ALM:
             return folders
         return []
     
+    async def fetch_release_folders(self, username: str, domain: str, project: str, parent_id: str) -> List[Dict]:
+        """Fetch release folders using generic engine."""
+        result = await self.fetch_and_store("release-folders", username, domain, project, parent_id=parent_id)
+        if result["success"]:
+            # Query MongoDB to get parsed entities
+            cursor = self.db.testlab_release_folders.find({"user": username, "parent_id": parent_id})
+            folders = []
+            async for f in cursor:
+                folders.append({"id": f.get("id"), "name": f.get("name")})
+            return folders
+        return []
+    
     async def fetch_tests_for_folder(self, username: str, domain: str, project: str, folder_id: str) -> List[Dict]:
         """Fetch tests using generic engine."""
         result = await self.fetch_and_store("tests", username, domain, project, parent_id=folder_id)
@@ -415,6 +453,18 @@ class ALM:
             async for t in cursor:
                 tests.append({"id": t.get("id"), "name": t.get("name")})
             return tests
+        return []
+    
+    async def fetch_releases_for_folder(self, username: str, domain: str, project: str, folder_id: str) -> List[Dict]:
+        """Fetch releases for a folder using generic engine."""
+        result = await self.fetch_and_store("releases", username, domain, project, parent_id=folder_id)
+        if result["success"]:
+            # Query MongoDB to get parsed entities
+            cursor = self.db.testlab_releases.find({"user": username, "parent_id": folder_id})
+            releases = []
+            async for r in cursor:
+                releases.append({"id": r.get("id"), "name": r.get("name")})
+            return releases
         return []
     
     async def fetch_test_sets(self, username: str, domain: str, project: str, cycle_id: str) -> List[Dict]:

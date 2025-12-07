@@ -266,9 +266,11 @@ export const getDefects = (
   project: string,
   start_index: number = 1,
   page_size: number = 100,
-  query_filter?: string
+  query_filter?: string,
+  force_refresh?: boolean,
+  export_all?: boolean
 ): Promise<AxiosResponse<DefectsResponse>> =>
-  api.get('/defects', { params: { username, domain, project, start_index, page_size, query_filter } })
+  api.get('/defects', { params: { username, domain, project, start_index, page_size, query_filter, force_refresh, export_all } })
 
 export const getDefectDetails = (
   username: string,

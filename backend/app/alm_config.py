@@ -99,9 +99,19 @@ class ALMConfig:
         "releases": {
             "path": "/rest/domains/{domain}/projects/{project}/releases",
             "method": "GET",
-            "params": {"domain": "required", "project": "required"},
-            "fields": ["id", "name", "start-date", "end-date", "description"],
-            "query_filter": None,
+            "params": {"domain": "required", "project": "required", "parent_id": "optional"},
+            "fields": ["id", "name", "parent-id", "start-date", "end-date", "description"],
+            "query_filter": "parent-id[{parent_id}]",
+            "sort_by": "id",
+            "sort_order": "asc",
+            "page_size": 100
+        },
+        "release-folders": {
+            "path": "/rest/domains/{domain}/projects/{project}/release-folders",
+            "method": "GET",
+            "params": {"domain": "required", "project": "required", "parent_id": "optional"},
+            "fields": ["id", "name", "parent-id", "description"],
+            "query_filter": "parent-id[{parent_id}]",
             "sort_by": "id",
             "sort_order": "asc",
             "page_size": 100
@@ -162,6 +172,7 @@ class ALMConfig:
         "TEST": "tests",
         "DESIGN_STEP": "design-steps",
         "ATTACHMENT": "attachments",
+        "RELEASE_FOLDER": "release-folders",
         "RELEASE": "releases",
         "RELEASE_CYCLE": "release-cycles",
         "TEST_SET": "test-sets",
@@ -246,11 +257,18 @@ class ALMConfig:
             {"field": "file-size", "alias": "File Size", "sequence": 6, "display": True},
             {"field": "description", "alias": "Description", "sequence": 7, "display": True}
         ],
+        "testlab_release_folders": [
+            {"field": "user", "alias": "Username", "sequence": 1, "display": False},
+            {"field": "id", "alias": "Release Folder ID", "sequence": 2, "display": True},
+            {"field": "name", "alias": "Release Folder Name", "sequence": 3, "display": True},
+            {"field": "parent_id", "alias": "Parent Folder ID", "sequence": 4, "display": False},
+            {"field": "description", "alias": "Description", "sequence": 5, "display": True}
+        ],
         "testlab_releases": [
             {"field": "user", "alias": "Username", "sequence": 1, "display": False},
             {"field": "id", "alias": "Release ID", "sequence": 2, "display": True},
             {"field": "name", "alias": "Release Name", "sequence": 3, "display": True},
-            {"field": "parent_id", "alias": "Project ID", "sequence": 4, "display": False},
+            {"field": "parent_id", "alias": "Parent Folder ID", "sequence": 4, "display": False},
             {"field": "start-date", "alias": "Start Date", "sequence": 5, "display": True},
             {"field": "end-date", "alias": "End Date", "sequence": 6, "display": True},
             {"field": "description", "alias": "Description", "sequence": 7, "display": True}

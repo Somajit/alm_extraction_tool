@@ -113,12 +113,12 @@ echo Database: !DB_NAME!
 echo.
 
 echo Testing MongoDB connection...
-%PYTHON_CMD% -c "from pymongo import MongoClient; import sys; client = MongoClient('!MONGO_URI!', serverSelectionTimeoutMS=5000); client.server_info(); print('Connected to MongoDB successfully'); sys.exit(0)" 2>nul
+%PYTHON_CMD% -c "from pymongo import MongoClient; import sys; client = MongoClient('''!MONGO_URI!''', serverSelectionTimeoutMS=5000); client.server_info(); print('Connected to MongoDB successfully'); sys.exit(0)" 2>nul
 if %errorLevel% equ 0 (
     echo MongoDB connection verified successfully!
     echo.
     echo Fetching collection statistics...
-    %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient('!MONGO_URI!'); db = client.get_database(); collections = db.list_collection_names(); print('\nCollections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')" 2>nul
+    %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient('''!MONGO_URI!'''); db = client.get_database(); collections = db.list_collection_names(); print('\nCollections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')" 2>nul
 ) else (
     echo Warning: Could not verify MongoDB connection
     echo Continuing anyway... Connection will be tested when starting services.
@@ -137,7 +137,7 @@ if %MONGO_STATUS% equ 0 (
     echo MongoDB connection verified successfully!
     echo.
     echo Fetching collection statistics...
-    %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient('!MONGO_URI!'); db = client.get_database(); collections = db.list_collection_names(); print('\nCollections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')" 2>nul
+    %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient('''!MONGO_URI!'''); db = client.get_database(); collections = db.list_collection_names(); print('\nCollections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')" 2>nul
     goto mongo_connected
 )
 
@@ -211,7 +211,7 @@ if /i "%CLEAN_CHOICE%"=="y" (
     if "!CONFIRM!"=="YES" (
         echo.
         echo Cleaning MongoDB database using Python
-        python -c "from pymongo import MongoClient; client = MongoClient('!MONGO_URI!'); db = client.get_database(); cols = db.list_collection_names(); [db.drop_collection(col) for col in cols]; print('Database cleaned successfully.')"
+        python -c "from pymongo import MongoClient; client = MongoClient('''!MONGO_URI!'''); db = client.get_database(); cols = db.list_collection_names(); [db.drop_collection(col) for col in cols]; print('Database cleaned successfully.')"
         
         if !errorLevel! equ 0 (
             echo Database cleaned successfully!

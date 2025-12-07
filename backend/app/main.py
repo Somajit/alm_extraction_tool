@@ -367,9 +367,11 @@ async def api_login(request: LoginRequest):
             request.username, request.domain, request.project, request.project_group
         )
         
-        # Fetch and store defects with project_group
+        # Fetch and store initial 10 defects with project_group (for quick login)
         defects_result = await alm_client.fetch_and_store_defects(
-            request.username, request.domain, request.project, request.project_group
+            request.username, request.domain, request.project, request.project_group,
+            start_index=1,
+            page_size=10
         )
         
         # Mark user as logged in
@@ -879,22 +881,43 @@ async def get_tree(
     if type == 'testplan':
         # If folder_id is provided, fetch its children (subfolders, tests, attachments)
         if folder_id:
-            # Fetch subfolders
-            subfolders = await alm_client.fetch_test_folders(username, domain, project, int(folder_id))
-            if subfolders is None:
-                subfolders = []
+            # Check MongoDB first for subfolders
+            cursor = db.testplan_folders.find({"user": username, "parent_id": folder_id})
+            subfolders = []
+            async for f in cursor:
+                subfolders.append({"id": f.get("id"), "name": f.get("name")})
             
-            # Fetch tests
-            tests = await alm_client.fetch_tests_for_folder(username, domain, project, folder_id)
-            if tests is None:
-                tests = []
+            # If not in MongoDB, fetch from ALM
+            if not subfolders:
+                subfolders = await alm_client.fetch_test_folders(username, domain, project, int(folder_id))
+                if subfolders is None:
+                    subfolders = []
             
-            # Fetch folder attachments
-            folder_attachments = await alm_client.fetch_attachments(
-                username, domain, project, "test-folder", folder_id
-            )
-            if folder_attachments is None:
-                folder_attachments = []
+            # Check MongoDB first for tests
+            cursor = db.testplan_tests.find({"user": username, "parent_id": folder_id})
+            tests = []
+            async for t in cursor:
+                tests.append({"id": t.get("id"), "name": t.get("name")})
+            
+            # If not in MongoDB, fetch from ALM
+            if not tests:
+                tests = await alm_client.fetch_tests_for_folder(username, domain, project, folder_id)
+                if tests is None:
+                    tests = []
+            
+            # Check MongoDB first for folder attachments
+            cursor = db.attachments.find({"user": username, "parent_type": "test-folder", "parent_id": folder_id})
+            folder_attachments = []
+            async for a in cursor:
+                folder_attachments.append({"id": a.get("id"), "name": a.get("name")})
+            
+            # If not in MongoDB, fetch from ALM
+            if not folder_attachments:
+                folder_attachments = await alm_client.fetch_attachments(
+                    username, domain, project, "test-folder", folder_id
+                )
+                if folder_attachments is None:
+                    folder_attachments = []
             
             # Build tree structure
             tree_nodes = []
@@ -1003,19 +1026,99 @@ async def get_tree(
         return {"tree": tree}
     
     elif type == 'testlab':
-        # TestLab tree: Releases -> Release Cycles -> Test Sets
+        # TestLab tree: Release Folders -> Subfolders / Releases -> Release Cycles -> Test Sets
         # folder_id here represents different entity IDs based on context:
+        # - release_folder_id when fetching subfolders/releases
         # - release_id when fetching cycles
         # - cycle_id when fetching test sets
         
         if folder_id:
-            # Check if this is a release (fetch cycles) or cycle (fetch test sets)
-            # We'll use a prefix to distinguish: "release_", "cycle_", "testset_"
+            # Check if this is a release folder (fetch subfolders+releases), release (fetch cycles), or cycle (fetch test sets)
+            # We'll use a prefix to distinguish: "folder_", "release_", "cycle_", "testset_"
             
-            if folder_id.startswith("release_"):
-                # Fetch release cycles for this release from ALM/Mock ALM
+            if folder_id.startswith("folder_"):
+                # Fetch subfolders and releases for this release folder
+                folder_id_actual = folder_id.replace("folder_", "")
+                
+                # Check MongoDB first for subfolders (release-folders with parent_id=folder_id_actual)
+                cursor = db.testlab_release_folders.find({"user": username, "parent_id": folder_id_actual})
+                subfolders = []
+                async for f in cursor:
+                    subfolders.append({"id": f.get("id"), "name": f.get("name")})
+                
+                # If not in MongoDB, fetch from ALM
+                if not subfolders:
+                    subfolders = await alm_client.fetch_release_folders(username, domain, project, folder_id_actual)
+                
+                # Check MongoDB first for releases (releases with parent_id=folder_id_actual)
+                cursor = db.testlab_releases.find({"user": username, "parent_id": folder_id_actual})
+                releases = []
+                async for r in cursor:
+                    releases.append({"id": r.get("id"), "name": r.get("name")})
+                
+                # If not in MongoDB, fetch from ALM
+                if not releases:
+                    releases = await alm_client.fetch_releases_for_folder(username, domain, project, folder_id_actual)
+                
+                tree_nodes = []
+                
+                # Add subfolders container if there are subfolders
+                if len(subfolders) > 0:
+                    subfolder_children = []
+                    for subfolder in subfolders:
+                        subfolder_children.append({
+                            "id": f"folder_{subfolder['id']}",
+                            "label": subfolder.get("name", "Unnamed Folder"),
+                            "type": "folder",
+                            "folder_id": subfolder["id"],
+                            "has_children": True,
+                            "children": []
+                        })
+                    
+                    tree_nodes.append({
+                        "id": f"subfolders_{folder_id_actual}",
+                        "label": "Subfolders",
+                        "type": "container",
+                        "has_children": True,
+                        "children": subfolder_children
+                    })
+                
+                # Add releases container if there are releases
+                if len(releases) > 0:
+                    release_children = []
+                    for release in releases:
+                        release_children.append({
+                            "id": f"release_{release['id']}",
+                            "label": release.get("name", "Unnamed Release"),
+                            "type": "release",
+                            "release_id": release["id"],
+                            "has_children": True,
+                            "children": []
+                        })
+                    
+                    tree_nodes.append({
+                        "id": f"releases_{folder_id_actual}",
+                        "label": "Releases",
+                        "type": "container",
+                        "has_children": True,
+                        "children": release_children
+                    })
+                
+                return {"tree": tree_nodes}
+            
+            elif folder_id.startswith("release_"):
+                # Fetch release cycles for this release
                 release_id = folder_id.replace("release_", "")
-                cycles = await alm_client.fetch_release_cycles(username, domain, project, release_id)
+                
+                # Check MongoDB first for cycles
+                cursor = db.testlab_release_cycles.find({"user": username, "parent_id": release_id})
+                cycles = []
+                async for c in cursor:
+                    cycles.append({"id": c.get("id"), "name": c.get("name")})
+                
+                # If not in MongoDB, fetch from ALM
+                if not cycles:
+                    cycles = await alm_client.fetch_release_cycles(username, domain, project, release_id)
                 
                 tree_nodes = []
                 for cycle in cycles:
@@ -1033,7 +1136,16 @@ async def get_tree(
             elif folder_id.startswith("cycle_"):
                 # Fetch test sets for this cycle
                 cycle_id = folder_id.replace("cycle_", "")
-                test_sets = await alm_client.fetch_test_sets(username, domain, project, cycle_id)
+                
+                # Check MongoDB first for test sets
+                cursor = db.testlab_testsets.find({"user": username, "parent_id": cycle_id})
+                test_sets = []
+                async for ts in cursor:
+                    test_sets.append({"id": ts.get("id"), "name": ts.get("name")})
+                
+                # If not in MongoDB, fetch from ALM
+                if not test_sets:
+                    test_sets = await alm_client.fetch_test_sets(username, domain, project, cycle_id)
                 
                 tree_nodes = []
                 for test_set in test_sets:
@@ -1052,13 +1164,27 @@ async def get_tree(
                 # Fetch test runs and attachments for this test set
                 testset_id = folder_id.replace("testset_", "")
                 
-                # Fetch test runs
-                test_runs = await alm_client.fetch_test_runs(username, domain, project, testset_id)
+                # Check MongoDB first for test runs
+                cursor = db.testlab_testruns.find({"user": username, "parent_id": testset_id})
+                test_runs = []
+                async for r in cursor:
+                    test_runs.append({"id": r.get("id"), "name": r.get("name"), "status": r.get("status", "")})
                 
-                # Fetch test set attachments
-                testset_attachments = await alm_client.fetch_attachments(
-                    username, domain, project, "test-set", testset_id
-                )
+                # If not in MongoDB, fetch from ALM
+                if not test_runs:
+                    test_runs = await alm_client.fetch_test_runs(username, domain, project, testset_id)
+                
+                # Check MongoDB first for test set attachments
+                cursor = db.attachments.find({"user": username, "parent_type": "test-set", "parent_id": testset_id})
+                testset_attachments = []
+                async for a in cursor:
+                    testset_attachments.append({"id": a.get("id"), "name": a.get("name")})
+                
+                # If not in MongoDB, fetch from ALM
+                if not testset_attachments:
+                    testset_attachments = await alm_client.fetch_attachments(
+                        username, domain, project, "test-set", testset_id
+                    )
                 
                 tree_nodes = []
                 
@@ -1105,31 +1231,31 @@ async def get_tree(
                 
                 return {"tree": tree_nodes}
         
-        # Root level - fetch releases from MongoDB
-        cursor = db.testlab_releases.find({"user": username})
-        releases = []
-        async for r in cursor:
-            releases.append({"id": r.get("id"), "name": r.get("name")})
+        # Root level - fetch release folders with parent_id=0 from MongoDB
+        cursor = db.testlab_release_folders.find({"user": username, "parent_id": "0"})
+        release_folders = []
+        async for f in cursor:
+            release_folders.append({"id": f.get("id"), "name": f.get("name")})
         
         # If MongoDB is empty, fetch from ALM (which stores in MongoDB)
-        if not releases:
-            print(f"MongoDB empty for testlab releases, fetching from ALM for user {username}")
-            await alm_client.fetch_and_store_releases(username, domain, project)
+        if not release_folders:
+            print(f"MongoDB empty for testlab release folders, fetching from ALM for user {username}")
+            await alm_client.fetch_and_store_root_release_folders(username, domain, project)
             
             # Now query MongoDB again after storing
-            cursor = db.testlab_releases.find({"user": username})
-            releases = []
-            async for r in cursor:
-                releases.append({"id": r.get("id"), "name": r.get("name")})
+            cursor = db.testlab_release_folders.find({"user": username, "parent_id": "0"})
+            release_folders = []
+            async for f in cursor:
+                release_folders.append({"id": f.get("id"), "name": f.get("name")})
         
         # Convert to tree format
         tree = []
-        for release in releases:
+        for folder in release_folders:
             tree.append({
-                "id": f"release_{release['id']}",
-                "label": release.get("name", "Unnamed Release"),
-                "type": "release",
-                "release_id": release["id"],
+                "id": f"folder_{folder['id']}",
+                "label": folder.get("name", "Unnamed Folder"),
+                "type": "folder",
+                "folder_id": folder["id"],
                 "has_children": True,
                 "children": []
             })
@@ -1228,12 +1354,19 @@ async def get_test_children(
 ):
     """Get children nodes for a test (attachments subfolder and test.json)."""
     try:
-        # Fetch test attachments
-        attachments = await alm_client.fetch_attachments(
-            username, domain, project, "test", test_id
-        )
-        if attachments is None:
-            attachments = []
+        # Check MongoDB first for attachments
+        cursor = db.attachments.find({"user": username, "parent_type": "test", "parent_id": test_id})
+        attachments = []
+        async for a in cursor:
+            attachments.append({"id": a.get("id"), "name": a.get("name")})
+        
+        # If not in MongoDB, fetch from ALM
+        if not attachments:
+            attachments = await alm_client.fetch_attachments(
+                username, domain, project, "test", test_id
+            )
+            if attachments is None:
+                attachments = []
         
         # Build tree structure
         tree = []
@@ -1293,12 +1426,19 @@ async def get_run_children(
         # Add run steps
         display_data["Run Steps"] = run_details.get("run_steps", [])
         
-        # Fetch run attachments
-        run_attachments = await alm_client.fetch_attachments(
-            username, domain, project, "run", run_id
-        )
-        if run_attachments is None:
-            run_attachments = []
+        # Check MongoDB first for run attachments
+        cursor = db.attachments.find({"user": username, "parent_type": "run", "parent_id": run_id})
+        run_attachments = []
+        async for a in cursor:
+            run_attachments.append({"id": a.get("id"), "name": a.get("name")})
+        
+        # If not in MongoDB, fetch from ALM
+        if not run_attachments:
+            run_attachments = await alm_client.fetch_attachments(
+                username, domain, project, "run", run_id
+            )
+            if run_attachments is None:
+                run_attachments = []
         
         tree = []
         
@@ -1447,26 +1587,51 @@ async def extract_folder_recursive(request: ExtractRequest):
                 "folder_attachments": []
             }
             
-            # Fetch subfolders
-            subfolders = await alm_client.fetch_test_folders(
-                username, domain, project, int(current_folder_id)
-            )
+            # Check MongoDB first for subfolders
+            cursor = db.testplan_folders.find({"user": username, "parent_id": current_folder_id})
+            subfolders = []
+            async for f in cursor:
+                subfolders.append({"id": f.get("id"), "name": f.get("name")})
             
-            # Fetch tests in this folder
-            tests = await alm_client.fetch_tests_for_folder(
-                username, domain, project, current_folder_id
-            )
-            
-            # Fetch folder attachments
-            folder_attachments = await alm_client.fetch_attachments(
-                username, domain, project, "test-folder", current_folder_id
-            )
-            
-            # Cache folder attachments
-            if folder_attachments:
-                folder_attachments = await cache_attachments(
-                    username, domain, project, folder_attachments
+            # If not in MongoDB, fetch from ALM
+            if not subfolders:
+                subfolders = await alm_client.fetch_test_folders(
+                    username, domain, project, int(current_folder_id)
                 )
+            
+            # Check MongoDB first for tests
+            cursor = db.testplan_tests.find({"user": username, "parent_id": current_folder_id})
+            tests = []
+            async for t in cursor:
+                tests.append({"id": t.get("id"), "name": t.get("name")})
+            
+            # If not in MongoDB, fetch from ALM
+            if not tests:
+                tests = await alm_client.fetch_tests_for_folder(
+                    username, domain, project, current_folder_id
+                )
+            
+            # Check MongoDB first for folder attachments
+            cursor = db.attachments.find({"user": username, "parent_type": "test-folder", "parent_id": current_folder_id})
+            folder_attachments = []
+            async for a in cursor:
+                folder_attachments.append({
+                    "id": a.get("id"),
+                    "name": a.get("name"),
+                    "sanitized_name": a.get("sanitized_name", a.get("name", ""))
+                })
+            
+            # If not in MongoDB, fetch from ALM
+            if not folder_attachments:
+                folder_attachments = await alm_client.fetch_attachments(
+                    username, domain, project, "test-folder", current_folder_id
+                )
+                
+                # Cache folder attachments
+                if folder_attachments:
+                    folder_attachments = await cache_attachments(
+                        username, domain, project, folder_attachments
+                    )
             
             # Process each test to get its details and attachments
             test_data = []
@@ -1592,19 +1757,37 @@ async def get_testset_details(
 ):
     """Get detailed test set information including test runs and create testset.json."""
     try:
-        # Fetch test runs for the test set
-        test_runs = await alm_client.fetch_test_runs(username, domain, project, testset_id)
+        # Check MongoDB first for test runs
+        cursor = db.testlab_testruns.find({"user": username, "parent_id": testset_id})
+        test_runs = []
+        async for r in cursor:
+            test_runs.append({"id": r.get("id"), "name": r.get("name"), "status": r.get("status", "")})
         
-        # Fetch test set attachments
-        attachments = await alm_client.fetch_attachments(
-            username, domain, project, "test-set", testset_id
-        )
+        # If not in MongoDB, fetch from ALM
+        if not test_runs:
+            test_runs = await alm_client.fetch_test_runs(username, domain, project, testset_id)
         
-        # Cache attachments
-        if attachments:
-            attachments = await cache_attachments(
-                username, domain, project, attachments
+        # Check MongoDB first for attachments
+        cursor = db.attachments.find({"user": username, "parent_type": "test-set", "parent_id": testset_id})
+        attachments = []
+        async for a in cursor:
+            attachments.append({
+                "id": a.get("id"),
+                "name": a.get("name"),
+                "sanitized_name": a.get("sanitized_name", a.get("name", ""))
+            })
+        
+        # If not in MongoDB, fetch from ALM
+        if not attachments:
+            attachments = await alm_client.fetch_attachments(
+                username, domain, project, "test-set", testset_id
             )
+            
+            # Cache attachments
+            if attachments:
+                attachments = await cache_attachments(
+                    username, domain, project, attachments
+                )
         
         # Build test set details
         testset_details = {
@@ -1698,14 +1881,14 @@ async def extract_testlab_recursive(
     node_type: str
 ):
     """
-    Recursively extract TestLab data starting from a release or cycle.
+    Recursively extract TestLab data starting from a release folder, release, or cycle.
     
     Args:
-        node_id: ID of the release or cycle (without prefix)
-        node_type: Either "release" or "cycle"
+        node_id: ID of the folder, release, or cycle (without prefix)
+        node_type: Either "folder", "release", or "cycle"
     
     Returns:
-        Complete subtree structure with all releases, cycles, test sets, runs, and attachments
+        Complete subtree structure with all folders, releases, cycles, test sets, runs, and attachments
     """
     try:
         async def extract_testset_tree(testset_id: str) -> Dict[str, Any]:
@@ -1716,8 +1899,15 @@ async def extract_testlab_recursive(
                 "attachments": []
             }
             
-            # Fetch test runs
-            test_runs = await alm_client.fetch_test_runs(username, domain, project, testset_id)
+            # Check MongoDB first for test runs
+            cursor = db.testlab_testruns.find({"user": username, "parent_id": testset_id})
+            test_runs = []
+            async for r in cursor:
+                test_runs.append({"id": r.get("id"), "name": r.get("name"), "status": r.get("status", "")})
+            
+            # If not in MongoDB, fetch from ALM
+            if not test_runs:
+                test_runs = await alm_client.fetch_test_runs(username, domain, project, testset_id)
             
             # For each run, fetch complete details including run steps and attachments
             enriched_runs = []
@@ -1800,8 +1990,15 @@ async def extract_testlab_recursive(
                 "test_sets": []
             }
             
-            # Fetch test sets for this cycle
-            test_sets = await alm_client.fetch_test_sets(username, domain, project, cycle_id)
+            # Check MongoDB first for test sets
+            cursor = db.testlab_testsets.find({"user": username, "parent_id": cycle_id})
+            test_sets = []
+            async for ts in cursor:
+                test_sets.append({"id": ts.get("id"), "name": ts.get("name")})
+            
+            # If not in MongoDB, fetch from ALM
+            if not test_sets:
+                test_sets = await alm_client.fetch_test_sets(username, domain, project, cycle_id)
             
             # Process each test set
             testset_data = []
@@ -1825,8 +2022,15 @@ async def extract_testlab_recursive(
                 "cycles": []
             }
             
-            # Fetch cycles for this release
-            cycles = await alm_client.fetch_release_cycles(username, domain, project, release_id)
+            # Check MongoDB first for cycles
+            cursor = db.testlab_release_cycles.find({"user": username, "parent_id": release_id})
+            cycles = []
+            async for c in cursor:
+                cycles.append({"id": c.get("id"), "name": c.get("name")})
+            
+            # If not in MongoDB, fetch from ALM
+            if not cycles:
+                cycles = await alm_client.fetch_release_cycles(username, domain, project, release_id)
             
             # Process each cycle
             cycle_data = []
@@ -1840,19 +2044,95 @@ async def extract_testlab_recursive(
             
             return result
         
+        async def extract_folder_tree(folder_id: str, depth: int = 0) -> Dict[str, Any]:
+            """Extract release folder with all subfolders and releases recursively."""
+            if depth > 20:  # Prevent infinite recursion
+                return {"error": "Max depth reached"}
+            
+            result = {
+                "folder_id": folder_id,
+                "subfolders": [],
+                "releases": []
+            }
+            
+            # Check MongoDB first for subfolders
+            cursor = db.testlab_release_folders.find({"user": username, "parent_id": folder_id})
+            subfolders = []
+            async for f in cursor:
+                subfolders.append({"id": f.get("id"), "name": f.get("name")})
+            
+            # If not in MongoDB, fetch from ALM
+            if not subfolders:
+                subfolders = await alm_client.fetch_release_folders(username, domain, project, folder_id)
+            
+            # Process each subfolder recursively
+            subfolder_data = []
+            for subfolder in subfolders:
+                subfolder_id = str(subfolder.get("id"))
+                subfolder_tree = await extract_folder_tree(subfolder_id, depth + 1)
+                subfolder_tree["folder_info"] = subfolder
+                subfolder_data.append(subfolder_tree)
+            
+            result["subfolders"] = subfolder_data
+            
+            # Check MongoDB first for releases
+            cursor = db.testlab_releases.find({"user": username, "parent_id": folder_id})
+            releases = []
+            async for r in cursor:
+                releases.append({"id": r.get("id"), "name": r.get("name")})
+            
+            # If not in MongoDB, fetch from ALM
+            if not releases:
+                releases = await alm_client.fetch_releases_for_folder(username, domain, project, folder_id)
+            
+            # Process each release
+            release_data = []
+            for release in releases:
+                release_id = str(release.get("id"))
+                release_tree = await extract_release_tree(release_id, depth + 1)
+                release_tree["release_info"] = release
+                release_data.append(release_tree)
+            
+            result["releases"] = release_data
+            
+            return result
+        
         # Start recursive extraction based on node type
-        if node_type == "release":
+        if node_type == "folder":
+            extraction_result = await extract_folder_tree(node_id)
+        elif node_type == "release":
             extraction_result = await extract_release_tree(node_id)
         elif node_type == "cycle":
             extraction_result = await extract_cycle_tree(node_id)
         else:
-            raise HTTPException(status_code=400, detail=f"Invalid node_type: {node_type}")
+            raise HTTPException(status_code=400, detail=f"Invalid node_type: {node_type}. Must be 'folder', 'release', or 'cycle'")
         
         # Calculate statistics
         def count_testlab_items(node: Dict[str, Any], node_type: str) -> Dict[str, int]:
-            stats = {"releases": 0, "cycles": 0, "testsets": 0, "runs": 0, "attachments": 0}
+            stats = {"folders": 0, "releases": 0, "cycles": 0, "testsets": 0, "runs": 0, "attachments": 0}
             
-            if node_type == "release":
+            if node_type == "folder":
+                stats["folders"] = len(node.get("subfolders", []))
+                stats["releases"] = len(node.get("releases", []))
+                
+                # Count items in subfolders recursively
+                for subfolder in node.get("subfolders", []):
+                    subfolder_stats = count_testlab_items(subfolder, "folder")
+                    stats["folders"] += subfolder_stats["folders"]
+                    stats["releases"] += subfolder_stats["releases"]
+                    stats["cycles"] += subfolder_stats["cycles"]
+                    stats["testsets"] += subfolder_stats["testsets"]
+                    stats["runs"] += subfolder_stats["runs"]
+                    stats["attachments"] += subfolder_stats["attachments"]
+                
+                # Count items in releases
+                for release in node.get("releases", []):
+                    release_stats = count_testlab_items(release, "release")
+                    stats["cycles"] += release_stats["cycles"]
+                    stats["testsets"] += release_stats["testsets"]
+                    stats["runs"] += release_stats["runs"]
+                    stats["attachments"] += release_stats["attachments"]
+            elif node_type == "release":
                 stats["cycles"] = len(node.get("cycles", []))
                 for cycle in node.get("cycles", []):
                     cycle_stats = count_testlab_items(cycle, "cycle")
@@ -1871,7 +2151,7 @@ async def extract_testlab_recursive(
             return stats
         
         stats = count_testlab_items(extraction_result, node_type)
-        stats["total_items"] = stats.get("releases", 0) + stats.get("cycles", 0) + stats.get("testsets", 0) + stats.get("runs", 0) + stats.get("attachments", 0)
+        stats["total_items"] = stats.get("folders", 0) + stats.get("releases", 0) + stats.get("cycles", 0) + stats.get("testsets", 0) + stats.get("runs", 0) + stats.get("attachments", 0)
         
         # Store extraction result in MongoDB for future reference
         await db.testlab_extraction_results.update_one(
@@ -1922,7 +2202,9 @@ async def get_defects(
     project: str,
     start_index: int = 1,
     page_size: int = 100,
-    query_filter: str = None
+    query_filter: str = None,
+    force_refresh: bool = False,
+    export_all: bool = False
 ):
     """
     Get defects with pagination and optional filtering.
@@ -1933,8 +2215,10 @@ async def get_defects(
         domain: Domain name
         project: Project name
         start_index: Starting index (1-based, default=1)
-        page_size: Number of defects per page (default=100)
-        query_filter: Optional ALM query filter
+        page_size: Number of defects per page (default=100, export uses large number)
+        query_filter: Optional ALM query filter (clears cache if changed)
+        force_refresh: Force refresh from ALM (clears cache)
+        export_all: Fetch all matching defects for export (ignores pagination)
     
     Returns:
         Dict with defects array and total count
@@ -1944,20 +2228,56 @@ async def get_defects(
         user_creds = await db.user_credentials.find_one({"user": username})
         project_group = user_creds.get("project_group", "default") if user_creds else "default"
         
-        # Fetch fresh data from ALM and store in MongoDB
-        await alm_client.fetch_and_store_defects(
-            username, domain, project, project_group,
-            start_index=start_index, 
-            page_size=page_size,
-            query_filter=query_filter
-        )
+        # Check if filter changed or force refresh - clear cache if so
+        cache_key = f"{username}_{project_group}_defects_filter"
+        cached_filter = await db.defects_cache_meta.find_one({"cache_key": cache_key})
+        current_filter = query_filter or ""
+        
+        if force_refresh or (cached_filter and cached_filter.get("query_filter") != current_filter):
+            # Clear defects cache when filter changes
+            await db.defects.delete_many({"user": username, "project_group": project_group})
+            # Update filter cache
+            await db.defects_cache_meta.update_one(
+                {"cache_key": cache_key},
+                {"$set": {"query_filter": current_filter, "updated_at": datetime.utcnow().isoformat()}},
+                upsert=True
+            )
+        
+        # For export, fetch all matching defects in one go (with large page size)
+        if export_all:
+            # Fetch all matching defects from ALM
+            await alm_client.fetch_and_store_defects(
+                username, domain, project, project_group,
+                start_index=1,
+                page_size=10000,  # Large number to get all defects
+                query_filter=query_filter
+            )
+        else:
+            # Check if we need to fetch from ALM (cache miss or page not yet fetched)
+            defect_count = await db.defects.count_documents({"user": username, "project_group": project_group})
+            needs_fetch = defect_count < start_index or defect_count < (start_index + page_size - 1)
+            
+            if needs_fetch or force_refresh:
+                # Fetch this page from ALM and store in MongoDB
+                await alm_client.fetch_and_store_defects(
+                    username, domain, project, project_group,
+                    start_index=start_index,
+                    page_size=page_size,
+                    query_filter=query_filter
+                )
         
         # Query from MongoDB with project_group filter
-        cursor = db.defects.find(
-            {"user": username, "project_group": project_group},
-            skip=start_index - 1,
-            limit=page_size
-        )
+        if export_all:
+            # Return all defects for export
+            cursor = db.defects.find({"user": username, "project_group": project_group})
+        else:
+            # Return paginated results
+            cursor = db.defects.find(
+                {"user": username, "project_group": project_group},
+                skip=start_index - 1,
+                limit=page_size
+            )
+        
         defects = []
         async for d in cursor:
             d.pop("_id", None)

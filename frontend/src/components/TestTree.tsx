@@ -106,8 +106,11 @@ const TestTree: React.FC<TestTreeProps> = ({ type, username, domain, project }) 
           children = res.data.tree.map(addExpandedState)
         }
       } else if (type === 'TestLab') {
-        // TestLab logic: releases, cycles, testsets
-        if (treenode.type === 'release') {
+        // TestLab logic: folders, releases, cycles, testsets
+        if (treenode.type === 'folder') {
+          // Fetch release folder's subfolders and releases
+          children = await loadTree(`folder_${treenode.folder_id}`)
+        } else if (treenode.type === 'release') {
           // Fetch release cycles
           children = await loadTree(`release_${treenode.release_id}`)
         } else if (treenode.type === 'cycle') {
@@ -256,8 +259,8 @@ const TestTree: React.FC<TestTreeProps> = ({ type, username, domain, project }) 
         })
       }
     } else if (type === 'TestLab') {
-      // Show context menu for release and cycle nodes in TestLab
-      if (treenode.type === 'release' || treenode.type === 'cycle') {
+      // Show context menu for folder, release, and cycle nodes in TestLab
+      if (treenode.type === 'folder' || treenode.type === 'release' || treenode.type === 'cycle') {
         setContextMenu({ 
           mouseX: e.clientX, 
           mouseY: e.clientY,
@@ -293,10 +296,21 @@ const TestTree: React.FC<TestTreeProps> = ({ type, username, domain, project }) 
           treenode.folder_id!
         )
       } else if (type === 'TestLab') {
-        // Extract release or cycle recursively
+        // Extract release folder, release, or cycle recursively
         const { extractTestLabRecursive } = await import('../api')
-        const nodeType = treenode.type === 'release' ? 'release' : 'cycle'
-        const nodeId = treenode.type === 'release' ? treenode.release_id! : treenode.cycle_id!
+        let nodeType = 'cycle'
+        let nodeId = ''
+        
+        if (treenode.type === 'folder') {
+          nodeType = 'folder'
+          nodeId = treenode.folder_id!
+        } else if (treenode.type === 'release') {
+          nodeType = 'release'
+          nodeId = treenode.release_id!
+        } else if (treenode.type === 'cycle') {
+          nodeType = 'cycle'
+          nodeId = treenode.cycle_id!
+        }
         
         response = await extractTestLabRecursive(
           username,
@@ -316,8 +330,10 @@ const TestTree: React.FC<TestTreeProps> = ({ type, username, domain, project }) 
             // TestPlan stats: folders, tests, attachments
             statsMessage = ` (${stats.total_items} items: ${stats.folders || 0} folders, ${stats.tests || 0} tests, ${stats.attachments || 0} attachments)`
           } else if (type === 'TestLab') {
-            // TestLab stats: cycles, testsets, runs, attachments
-            if (treenode.type === 'release') {
+            // TestLab stats: folders, releases, cycles, testsets, runs, attachments
+            if (treenode.type === 'folder') {
+              statsMessage = ` (${stats.total_items} items: ${stats.folders || 0} folders, ${stats.releases || 0} releases, ${stats.cycles || 0} cycles, ${stats.testsets || 0} test sets, ${stats.runs || 0} runs, ${stats.attachments || 0} attachments)`
+            } else if (treenode.type === 'release') {
               statsMessage = ` (${stats.total_items} items: ${stats.cycles || 0} cycles, ${stats.testsets || 0} test sets, ${stats.runs || 0} runs, ${stats.attachments || 0} attachments)`
             } else if (treenode.type === 'cycle') {
               statsMessage = ` (${stats.total_items} items: ${stats.testsets || 0} test sets, ${stats.runs || 0} runs, ${stats.attachments || 0} attachments)`
@@ -371,15 +387,18 @@ const TestTree: React.FC<TestTreeProps> = ({ type, username, domain, project }) 
           throw new Error('Can only export folder nodes in TestPlan')
         }
       } else if (type === 'TestLab') {
-        // Extract release/cycle hierarchy for TestLab
-        if (treenode.type === 'release' && treenode.release_id) {
+        // Extract folder/release/cycle hierarchy for TestLab
+        if (treenode.type === 'folder' && treenode.folder_id) {
+          const response = await extractTestLabRecursive(username, domain, project, treenode.folder_id, 'folder')
+          extractedData = response.data
+        } else if (treenode.type === 'release' && treenode.release_id) {
           const response = await extractTestLabRecursive(username, domain, project, treenode.release_id, 'release')
           extractedData = response.data
         } else if (treenode.type === 'cycle' && treenode.cycle_id) {
           const response = await extractTestLabRecursive(username, domain, project, treenode.cycle_id, 'cycle')
           extractedData = response.data
         } else {
-          throw new Error('Can only export release or cycle nodes in TestLab')
+          throw new Error('Can only export folder, release, or cycle nodes in TestLab')
         }
       }
       
@@ -462,10 +481,14 @@ const TestTree: React.FC<TestTreeProps> = ({ type, username, domain, project }) 
         return <Folder fontSize="small" sx={{ mr: 1, color: '#42A5F5' }} /> // Blue folder
       } else if (treenode.label === 'Tests') {
         return <InsertDriveFile fontSize="small" sx={{ mr: 1, color: '#66BB6A' }} /> // Green file
+      } else if (treenode.label === 'Releases') {
+        return <Folder fontSize="small" sx={{ mr: 1, color: '#9C27B0' }} /> // Purple releases
       } else if (treenode.label === 'Attachments') {
         return <AttachFile fontSize="small" sx={{ mr: 1, color: '#AB47BC' }} /> // Purple attachment
+      } else if (treenode.label === 'Test Runs') {
+        return <InsertDriveFile fontSize="small" sx={{ mr: 1, color: '#66bb6a' }} /> // Green runs
       }
-      return <Folder fontSize="small" sx={{ mr: 1, color: '#64b5f6' }} />
+      return <Folder fontSize="small" sx={{ mr: 1, color: '#64b5f6' }} /> // Default blue
     } else if (treenode.type === 'test') {
       return <InsertDriveFile fontSize="small" sx={{ mr: 1, color: '#4CAF50' }} /> // Green test file
     } else if (treenode.type === 'attachment') {
@@ -559,9 +582,18 @@ const TestTree: React.FC<TestTreeProps> = ({ type, username, domain, project }) 
         </Box>
       )}
       
-      <List sx={{ width: '100%', bgcolor: 'background.paper' }}>
-        {treeData.map(treenode => renderTreeNode(treenode))}
-      </List>
+      <Box sx={{ 
+        width: '100%', 
+        height: '70vh', 
+        overflow: 'auto',
+        border: '1px solid #e0e0e0',
+        borderRadius: 1,
+        bgcolor: 'background.paper'
+      }}>
+        <List sx={{ width: '100%', bgcolor: 'background.paper' }}>
+          {treeData.map(treenode => renderTreeNode(treenode))}
+        </List>
+      </Box>
 
       <Menu
         open={contextMenu !== null}
@@ -571,7 +603,8 @@ const TestTree: React.FC<TestTreeProps> = ({ type, username, domain, project }) 
       >
         <MenuItem onClick={handleExtractFolder} disabled={extracting}>
           Extract {contextMenu?.treenode?.type === 'folder' ? 'Folder' : 
-                  contextMenu?.treenode?.type === 'release' ? 'Release' : 'Cycle'} (Recursive)
+                  contextMenu?.treenode?.type === 'release' ? 'Release' : 
+                  contextMenu?.treenode?.type === 'cycle' ? 'Cycle' : 'Item'} (Recursive)
         </MenuItem>
         <MenuItem onClick={handleExportToJSON}>
           <Download fontSize="small" sx={{ mr: 1 }} />

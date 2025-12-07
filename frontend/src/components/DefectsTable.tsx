@@ -35,9 +35,10 @@ const DefectsTable: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [total, setTotal] = useState(0)
   const [exporting, setExporting] = useState(false)
+  const [isInitialLoad, setIsInitialLoad] = useState(true)
   const [paginationModel, setPaginationModel] = useState<GridPaginationModel>({
     page: 0,
-    pageSize: 100,
+    pageSize: 10, // Start with 10 defects initially
   })
   const [dialogState, setDialogState] = useState<DefectDialogState>({
     open: false,
@@ -59,15 +60,32 @@ const DefectsTable: React.FC = () => {
     try {
       setLoading(true)
       const startIndex = paginationModel.page * paginationModel.pageSize + 1
-      const response = await getDefects(
-        username,
-        domain,
-        project,
-        startIndex,
-        paginationModel.pageSize
-      )
-      setDefects(response.data.defects)
-      setTotal(response.data.total)
+      
+      // On first load, switch to 100 per page after loading initial 10
+      if (isInitialLoad && paginationModel.pageSize === 10) {
+        const response = await getDefects(
+          username,
+          domain,
+          project,
+          startIndex,
+          10 // Load initial 10
+        )
+        setDefects(response.data.defects)
+        setTotal(response.data.total)
+        setIsInitialLoad(false)
+        // Switch to 100 per page for subsequent loads
+        setPaginationModel(prev => ({ ...prev, pageSize: 100 }))
+      } else {
+        const response = await getDefects(
+          username,
+          domain,
+          project,
+          startIndex,
+          paginationModel.pageSize
+        )
+        setDefects(response.data.defects)
+        setTotal(response.data.total)
+      }
     } catch (error) {
       console.error('Failed to load defects:', error)
     } finally {
@@ -106,25 +124,19 @@ const DefectsTable: React.FC = () => {
     try {
       setExporting(true)
       
-      // Fetch all defects (all pages)
-      const allDefects: Defect[] = []
-      const pageSize = 500
-      let currentPage = 0
-      let hasMore = true
+      // Fetch all defects using export_all flag (backend will fetch all matching defects)
+      const response = await getDefects(
+        username, 
+        domain, 
+        project, 
+        1, 
+        10000, // Large page size
+        undefined, // No filter for now (can be added later)
+        false, // Don't force refresh
+        true // Export all flag
+      )
       
-      while (hasMore) {
-        const startIndex = currentPage * pageSize + 1
-        const response = await getDefects(username, domain, project, startIndex, pageSize)
-        const fetchedDefects = response.data.defects || []
-        allDefects.push(...fetchedDefects)
-        
-        // Check if we've fetched all defects
-        if (allDefects.length >= response.data.total || fetchedDefects.length < pageSize) {
-          hasMore = false
-        } else {
-          currentPage++
-        }
-      }
+      const allDefects = response.data.defects || []
       
       // Prepare data for Excel
       const excelData = allDefects.map(defect => ({
