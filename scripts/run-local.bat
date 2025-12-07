@@ -97,6 +97,24 @@ set START_MONGO_LOCAL=1
 :mongo_selected
 echo.
 
+REM Detect Python executable early (needed for MongoDB tests)
+set PYTHON_CMD=python
+if exist "%USERPROFILE%\pyenv\Scripts\python.exe" (
+    set PYTHON_CMD=%USERPROFILE%\pyenv\Scripts\python.exe
+    echo Using Python from: %USERPROFILE%\pyenv\Scripts\python.exe
+) else (
+    where python >nul 2>&1
+    if %errorLevel% equ 0 (
+        set PYTHON_CMD=python
+        echo Using system Python
+    ) else (
+        echo ERROR: Python not found. Please install Python or configure pyenv.
+        pause
+        exit /b 1
+    )
+)
+echo.
+
 REM Step 2: MongoDB Status and Auto-start
 echo Step 2: MongoDB Status
 echo ----------------------
@@ -278,23 +296,8 @@ if not exist "backend\.env" (
 echo Backend configuration updated.
 echo.
 
-REM Detect Python executable
-set PYTHON_CMD=python
-if exist "%USERPROFILE%\pyenv\Scripts\python.exe" (
-    set PYTHON_CMD=%USERPROFILE%\pyenv\Scripts\python.exe
-    echo Using Python from: %USERPROFILE%\pyenv\Scripts\python.exe
-) else (
-    where python >nul 2>&1
-    if %errorLevel% equ 0 (
-        set PYTHON_CMD=python
-        echo Using system Python
-    ) else (
-        echo ERROR: Python not found. Please install Python or configure pyenv.
-        pause
-        exit /b 1
-    )
-)
-echo.
+REM Python executable already detected earlier
+REM Continuing with port detection...
 
 REM Find available ports
 echo Finding available ports...
