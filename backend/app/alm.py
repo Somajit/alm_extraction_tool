@@ -115,6 +115,7 @@ class ALM:
         """
         Generic pagination engine: Fetch ALL pages until entities < page_size (100).
         Automatically loops with start_index += 100.
+        Handles both 'results' format (domains/projects) and 'entities' format (everything else).
         """
         url = ALMConfig.build_alm_url(self.base_url, endpoint_name, domain=domain, project=project)
         all_entities = []
@@ -124,6 +125,20 @@ class ALM:
         # Remove pagination params from filter_params to avoid conflicts
         clean_filter_params = {k: v for k, v in filter_params.items() if k not in ['start_index', 'page_size']}
         
+        # Domains and projects use 'results' format without pagination
+        if endpoint_name in ["domains", "projects"]:
+            response = await self._make_request_with_retry(url, "GET", clean_filter_params, username=username)
+            
+            if not response:
+                logger.error(f"Failed to fetch {endpoint_name}")
+                return []
+            
+            # Handle 'results' format for domains/projects
+            entities = response.get("results", [])
+            logger.info(f"Fetched {len(entities)} {endpoint_name}")
+            return entities
+        
+        # Standard entities with pagination
         while True:
             params = ALMConfig.build_query_params(endpoint_name, start_index=start_index, 
                                                   page_size=page_size, **clean_filter_params)
@@ -152,6 +167,7 @@ class ALM:
         """
         Generic entity storage: Parse and store entities in MongoDB.
         Returns count of stored entities.
+        Handles both simple format (domains/projects) and complex ALM format (other entities).
         """
         collection_map = {
             "domains": self.db.domains,
@@ -171,7 +187,30 @@ class ALM:
         stored_count = 0
         
         for raw_entity in entities:
-            entity = ALMConfig.parse_alm_response_to_entity(endpoint_name, raw_entity, username, parent_id, project_group)
+            # Handle simple format for domains and projects
+            if endpoint_name == "domains":
+                # Format: {"name": "DOMAIN_NAME", "projects": []}
+                entity = {
+                    "user": username,
+                    "project_group": project_group,
+                    "id": raw_entity.get("name"),  # Use name as ID for domains
+                    "name": raw_entity.get("name"),
+                    "entity_type": "domain"
+                }
+            elif endpoint_name == "projects":
+                # Format: {"name": "Project_Name"}
+                entity = {
+                    "user": username,
+                    "project_group": project_group,
+                    "id": raw_entity.get("name"),  # Use name as ID for projects
+                    "name": raw_entity.get("name"),
+                    "parent_id": parent_id,
+                    "entity_type": "project"
+                }
+            else:
+                # Standard ALM format with Fields array
+                entity = ALMConfig.parse_alm_response_to_entity(endpoint_name, raw_entity, username, parent_id, project_group)
+            
             await collection.replace_one(
                 {"user": username, "project_group": project_group, "id": entity["id"]}, 
                 entity, 

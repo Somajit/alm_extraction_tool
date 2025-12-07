@@ -41,7 +41,6 @@ logger.info(f"Connecting to MongoDB: {MONGO_URI.split('@')[-1] if '@' in MONGO_U
 try:
     client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
     db = client.get_default_database()
-    attachments_collection = db['attachment_cache']
     logger.info("MongoDB client initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize MongoDB client: {e}")
@@ -637,7 +636,7 @@ async def clean_user_data(admin_username: str, target_username: str, project_gro
         'defects', 'attachments', 'design_steps',
         'testplan_test_details', 'testplan_extraction_results',
         'testlab_testset_details', 'testlab_extraction_results',
-        'defect_details', 'attachment_cache'
+        'defect_details'
     ]
     
     # Collections that only store user (no project_group)
@@ -691,7 +690,7 @@ async def get_db_stats(admin_username: str):
             'testplan_extraction_results', 'design_steps',
             'testlab_releases', 'testlab_release_cycles', 'testlab_testsets',
             'testlab_testruns', 'testlab_testset_details', 'testlab_extraction_results',
-            'defects', 'defect_details', 'attachments', 'attachment_cache'
+            'defects', 'defect_details', 'attachments'
         ]
         
         collection_stats = {}
@@ -742,7 +741,7 @@ async def clean_all_data(admin_username: str):
             'testplan_extraction_results', 'design_steps',
             'testlab_releases', 'testlab_release_cycles', 'testlab_testsets',
             'testlab_testruns', 'testlab_testset_details', 'testlab_extraction_results',
-            'defects', 'defect_details', 'attachments', 'attachment_cache'
+            'defects', 'defect_details', 'attachments'
         ]
         
         deleted_counts = {}
@@ -841,11 +840,10 @@ async def get_projects(domain: str, username: str):
 
 @app.post('/init')
 async def init_sample():
-    # Create a demo user and sample domains/projects and tree nodes
+    # Create a demo user and sample domains/projects
     await db.users.delete_many({})
     await db.domains.delete_many({})
     await db.projects.delete_many({})
-    await db.tree_cache.delete_many({})
     await db.defects.delete_many({})
 
     await db.users.insert_one({"username": "admin", "password": "admin123"})
@@ -857,20 +855,6 @@ async def init_sample():
         {"name": "Project1", "domain": "DomainA"},
         {"name": "Project2", "domain": "DomainA"},
         {"name": "ProjectX", "domain": "DomainB"}
-    ])
-    # Sample tree nodes for testplan/testlab
-    await db.tree_cache.insert_many([
-        {"type": "testplan", "project": "Project1", "tree": [
-            {"id": "tp1", "label": "Root Plan", "children": [
-                {"id": "tp1-1", "label": "Suite 1"},
-                {"id": "tp1-2", "label": "Suite 2"}
-            ]}
-        ]},
-        {"type": "testlab", "project": "Project1", "tree": [
-            {"id": "tl1", "label": "Execution Root", "children": [
-                {"id": "tl1-1", "label": "Cycle 1"}
-            ]}
-        ]}
     ])
 
     # Sample defects
@@ -1426,11 +1410,16 @@ async def get_folders(
             })
         return {"tree": tree}
     else:
-        # Fallback to old implementation for testlab
-        doc = await db.tree_cache.find_one({"project": project, "type": type})
-        if not doc:
-            return {"tree": []}
-        return {"tree": doc.get('tree', [])}
+        # For testlab, fetch releases as root nodes
+        releases = await db.testlab_releases.find({"user": username, "project_group": project_group}).to_list(length=1000)
+        tree = []
+        for release in releases:
+            tree.append({
+                "id": release["id"],
+                "label": release["name"],
+                "children": []  # Will be loaded on demand
+            })
+        return {"tree": tree}
 
 
 @app.post('/extract-folder-recursive')

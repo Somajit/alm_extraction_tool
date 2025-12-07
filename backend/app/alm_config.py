@@ -22,7 +22,7 @@ class ALMConfig:
     # Each endpoint has: path, method, required params, query structure, fields, sort order
     ALM_API_CONFIGS = {
         "domains": {
-            "path": "/rest/domains",
+            "path": "/api/domains",
             "method": "GET",
             "params": {},
             "fields": ["id", "name"],
@@ -32,7 +32,7 @@ class ALMConfig:
             "page_size": None  # No pagination for domains
         },
         "projects": {
-            "path": "/rest/domains/{domain}/projects",
+            "path": "/api/domains/{domain}/projects",
             "method": "GET",
             "params": {"domain": "required"},
             "fields": ["id", "name", "description"],

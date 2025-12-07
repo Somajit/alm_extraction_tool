@@ -96,42 +96,38 @@ def site_session(request: Request):
     logger.info("Site session created")
     return resp
 
-@app.get("/qcbin/rest/domains")
-@app.get("/rest/domains")
+@app.get("/qcbin/api/domains")
+@app.get("/api/domains")
 def get_domains(request: Request):
-    """Return mock domains in ALM format"""
+    """Return mock domains in actual ALM format"""
     logger.info("Get domains request received")
     if not validate_cookies(request):
         logger.warning("Domains request without valid cookies")
         raise HTTPException(status_code=401, detail="Authentication required")
     
-    # Return domains in proper ALM entities format
-    from alm_format_utils import simple_to_alm
-    
+    # Return domains in actual ALM format: {"results": [{"name": "...", "projects": []}]}
     domains = [
-        {"id": "DEFAULT", "name": "DEFAULT"},
-        {"id": "TESTDOMAIN", "name": "TESTDOMAIN"}
+        {"name": "DEFAULT", "projects": []},
+        {"name": "TESTDOMAIN", "projects": []}
     ]
     
     logger.info(f"Returning {len(domains)} domains")
-    return JSONResponse(content=simple_to_alm(domains, entity_type="domain"))
+    return JSONResponse(content={"results": domains})
 
-@app.get("/qcbin/rest/domains/{domain}/projects")
-@app.get("/rest/domains/{domain}/projects")
+@app.get("/qcbin/api/domains/{domain}/projects")
+@app.get("/api/domains/{domain}/projects")
 def get_projects(domain: str, request: Request):
-    """Return mock projects in ALM format"""
+    """Return mock projects in actual ALM format"""
     if not validate_cookies(request):
         raise HTTPException(status_code=401, detail="Authentication required")
     
-    # Return projects in proper ALM entities format
-    from alm_format_utils import simple_to_alm
-    
+    # Return projects in actual ALM format: {"results": [{"name": "..."}]}
     projects = [
-        {"id": "1", "name": "Test Project 1"},
-        {"id": "2", "name": "Test Project 2"}
+        {"name": "Test_Project_1"},
+        {"name": "Test_Project_2"}
     ]
     
-    return JSONResponse(content=simple_to_alm(projects, entity_type="project"))
+    return JSONResponse(content={"results": projects})
 
 @app.get("/qcbin/rest/domains/{domain}/projects/{project}/test-folders")
 @app.get("/rest/domains/{domain}/projects/{project}/test-folders")
