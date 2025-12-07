@@ -47,8 +47,34 @@ except Exception as e:
     logger.error(f"MONGO_URI format: {MONGO_URI[:20]}...")
     raise
 
-# Get encryption key
+# Get or generate encryption key
 encryption_key = os.environ.get('ALM_ENCRYPTION_KEY', '')
+
+# If no encryption key exists, generate one and try to save it to .env
+if not encryption_key:
+    from cryptography.fernet import Fernet
+    encryption_key = Fernet.generate_key().decode()
+    logger.warning("No ALM_ENCRYPTION_KEY found in environment. Generated new key.")
+    
+    # Try to add it to .env file for persistence
+    try:
+        if env_path.exists():
+            with open(env_path, 'r') as f:
+                env_content = f.read()
+            
+            # Only add if not already present
+            if 'ALM_ENCRYPTION_KEY' not in env_content:
+                with open(env_path, 'a') as f:
+                    f.write(f'\nALM_ENCRYPTION_KEY={encryption_key}\n')
+                logger.info("Added ALM_ENCRYPTION_KEY to .env file for persistence")
+        else:
+            # Create .env if it doesn't exist
+            with open(env_path, 'w') as f:
+                f.write(f'ALM_ENCRYPTION_KEY={encryption_key}\n')
+            logger.info("Created .env file with ALM_ENCRYPTION_KEY")
+    except Exception as e:
+        logger.warning(f"Could not save encryption key to .env: {e}")
+        logger.warning("Encryption key will change on restart. Add ALM_ENCRYPTION_KEY to .env manually.")
 
 # Initialize ALM client with new signature
 alm_client = ALM(db=db, encryption_key=encryption_key if encryption_key else None)

@@ -38,9 +38,15 @@ class ALM:
         self.xsrf_token = None
         self.is_authenticated = False
         
-        # Encryption
-        key = encryption_key or os.environ.get('ALM_ENCRYPTION_KEY') or Fernet.generate_key().decode()
-        self.cipher = Fernet(key.encode() if isinstance(key, str) else key)
+        # Encryption - Use provided key or generate/retrieve persistent key
+        if encryption_key:
+            self.cipher = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+        else:
+            # Generate a valid Fernet key (32 url-safe base64-encoded bytes)
+            # This ensures the key format is always valid
+            generated_key = Fernet.generate_key()
+            self.cipher = Fernet(generated_key)
+            logger.warning("No encryption key provided. Using generated key. Set ALM_ENCRYPTION_KEY in .env for production.")
         
         logger.info(f"ALM Client initialized. Using {'Mock ALM' if self.use_mock else 'Real ALM'}: {self.base_url}")
     
@@ -294,9 +300,18 @@ class ALM:
         
         cred = await self.db.user_credentials.find_one({"username": username})
         if not cred:
+            logger.warning(f"No stored credentials found for user: {username}")
             return False
         
-        password = self.cipher.decrypt(cred["encrypted_password"].encode()).decode()
+        try:
+            password = self.cipher.decrypt(cred["encrypted_password"].encode()).decode()
+        except Exception as decrypt_error:
+            logger.error(f"Failed to decrypt password for {username}: {str(decrypt_error)}")
+            logger.error("This usually means the encryption key has changed. User needs to re-authenticate.")
+            # Delete invalid credential
+            await self.db.user_credentials.delete_one({"username": username})
+            return False
+        
         result = await self.authenticate(username, password)
         return result.get("success", False)
     
