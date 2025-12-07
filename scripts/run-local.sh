@@ -305,14 +305,15 @@ else
     
     # Try to test connection using Python
     echo "Testing MongoDB connection..."
-    $PYTHON_CMD -c "from pymongo import MongoClient; import sys; client = MongoClient('''$MONGO_URI''', serverSelectionTimeoutMS=5000); client.server_info(); print('✓ Connection successful'); sys.exit(0)" 2>/dev/null
+    $PYTHON_CMD -c "from pymongo import MongoClient; import sys; client = MongoClient('''$MONGO_URI''', serverSelectionTimeoutMS=5000); client.server_info(); print('✓ Connection successful'); sys.exit(0)"
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ MongoDB connection verified${NC}"
         echo ""
         echo "Fetching collection statistics..."
-        $PYTHON_CMD -c "from pymongo import MongoClient; client = MongoClient('''$MONGO_URI'''); db = client.get_database(); collections = db.list_collection_names(); print('\nCollections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')" 2>/dev/null
+        $PYTHON_CMD -c "from pymongo import MongoClient; client = MongoClient('''$MONGO_URI'''); db = client.get_database(); collections = db.list_collection_names(); print('\nCollections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')"
     else
         echo -e "${YELLOW}⚠ Warning: Could not verify MongoDB connection${NC}"
+        echo "Please check: 1) MongoDB URI is correct, 2) Network connectivity, 3) MongoDB credentials"
         echo "Continuing anyway... Connection will be tested when starting services."
     fi
 fi
