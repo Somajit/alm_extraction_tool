@@ -97,6 +97,21 @@ set START_MONGO_LOCAL=1
 :mongo_selected
 echo.
 
+REM Activate Python virtual environment if it exists
+if exist "venv\Scripts\activate.bat" (
+    echo Activating Python virtual environment...
+    call venv\Scripts\activate.bat
+    echo Virtual environment activated
+) else if exist ".venv\Scripts\activate.bat" (
+    echo Activating Python virtual environment...
+    call .venv\Scripts\activate.bat
+    echo Virtual environment activated
+) else (
+    echo No virtual environment found at venv\ or .venv\
+    echo Using system Python
+)
+echo.
+
 REM Detect Python executable early (needed for MongoDB tests)
 set PYTHON_CMD=
 if exist "%USERPROFILE%\pyenv\Scripts\python.exe" (
@@ -142,18 +157,10 @@ REM Check if pymongo is installed
 echo Checking for pymongo...
 %PYTHON_CMD% -c "import pymongo" >nul 2>&1
 if %errorLevel% neq 0 (
-    echo WARNING: pymongo module not found
-    echo Installing pymongo...
-    %PYTHON_CMD% -m pip install pymongo >nul 2>&1
-    if %errorLevel% neq 0 (
-        echo Failed to install pymongo automatically
-        echo Please install it manually: %PYTHON_CMD% -m pip install pymongo
-        echo Skipping MongoDB connection test...
-        set SKIP_MONGO_TEST=1
-    ) else (
-        echo pymongo installed successfully
-        set SKIP_MONGO_TEST=0
-    )
+    echo WARNING: pymongo module not found in current environment
+    echo Please install dependencies: pip install -r backend\requirements.txt
+    echo Skipping MongoDB connection test...
+    set SKIP_MONGO_TEST=1
 ) else (
     echo pymongo found
     set SKIP_MONGO_TEST=0
