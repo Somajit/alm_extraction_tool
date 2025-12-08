@@ -204,19 +204,6 @@ set CONN_STATUS=%errorLevel%
 if %CONN_STATUS% equ 0 (
     echo Connection verified successfully!
     echo.
-    
-    REM Ask user if they want to clean the database
-    set /p CLEAN_DB="Do you want to clean the database? (y/N): "
-    if /i "!CLEAN_DB!"=="y" (
-        echo Cleaning database...
-        set "MONGO_URI_PARAM=!MONGO_URI!"
-        %PYTHON_CMD% "%~dp0mongo_helper.py" clean
-        echo.
-    )
-    
-    echo Fetching collection statistics...
-    set "MONGO_URI_PARAM=!MONGO_URI!"
-    %PYTHON_CMD% "%~dp0mongo_helper.py" stats
 ) else (
     echo Warning: Could not verify connection
 
