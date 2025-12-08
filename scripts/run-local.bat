@@ -203,13 +203,13 @@ echo import sys
 echo from pymongo import MongoClient
 echo uri = r"""!MONGO_URI!"""
 echo try:
-echo     client = MongoClient^(uri, serverSelectionTimeoutMS=5000^)
-echo     client.server_info^(^)
-echo     print^('Connected to MongoDB successfully'^)
-echo     sys.exit^(0^)
+echo     client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+echo     client.server_info()
+echo     print('Connected to MongoDB successfully')
+echo     sys.exit(0)
 echo except Exception as e:
-echo     print^(f'Error: {e}'^)
-echo     sys.exit^(1^)
+echo     print(f'Error: {e}')
+echo     sys.exit(1)
 ) > test_mongo.py
 
 %PYTHON_CMD% test_mongo.py
@@ -297,14 +297,14 @@ if %MONGO_STATUS% equ 0 (
         (
         echo from pymongo import MongoClient
         echo uri = r"""!MONGO_URI!"""
-        echo client = MongoClient^(uri^)
-        echo db = client.get_database^(^)
-        echo collections = db.list_collection_names^(^)
+        echo client = MongoClient(uri)
+        echo db = client.get_database()
+        echo collections = db.list_collection_names()
         echo for col in collections:
-        echo     db[col].delete_many^({}^)
-        echo     print^(f'Cleared collection: {col}'^)
-        echo print^('Database cleaned successfully'^)
-        ^) > clean_mongo.py
+        echo     db[col].delete_many({})
+        echo     print(f'Cleared collection: {col}')
+        echo print('Database cleaned successfully')
+        ) > clean_mongo.py
         
         %PYTHON_CMD% clean_mongo.py
         del clean_mongo.py 2>nul
@@ -316,27 +316,25 @@ if %MONGO_STATUS% equ 0 (
     (
     echo from pymongo import MongoClient
     echo uri = r"""!MONGO_URI!"""
-    echo client = MongoClient^(uri^)
-    echo db = client.get_database^(^)
-    echo collections = db.list_collection_names^(^)
-    echo print^(''^)
-    echo print^('Collections:'^)
-    echo print^('-' * 50^)
+    echo client = MongoClient(uri)
+    echo db = client.get_database()
+    echo collections = db.list_collection_names()
+    echo print('')
+    echo print('Collections:')
+    echo print('-' * 50)
     echo if collections:
-    echo     for col in sorted^(collections^):
-    echo         count = db[col].count_documents^({}^)
-    echo         print^(f'{col}: {count} documents'^)
-    echo     total = sum^([db[col].count_documents^({}^) for col in collections]^)
-    echo     print^('-' * 50^)
-    echo     print^(f'Total documents: {total}'^)
+    echo     for col in sorted(collections):
+    echo         count = db[col].count_documents({})
+    echo         print(f'{col}: {count} documents')
+    echo     total = sum([db[col].count_documents({}) for col in collections])
+    echo     print('-' * 50)
+    echo     print(f'Total documents: {total}')
     echo else:
-    echo     print^('No collections found'^)
-    ^) > stats_mongo.py
+    echo     print('No collections found')
+    ) > stats_mongo.py
     
     %PYTHON_CMD% stats_mongo.py
-    del stats_mongo.py 2>nul
-    
-    %PYTHON_CMD% stats_mongo.py
+    del stats_mongo.py 2>nul    %PYTHON_CMD% stats_mongo.py
     del stats_mongo.py
     goto mongo_connected
 )
