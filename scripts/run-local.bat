@@ -217,7 +217,9 @@ for /f "tokens=*" %%a in ("!MONGO_URI!") do set TEMP_URI=%%a
 for /f "tokens=4 delims=/" %%a in ("!TEMP_URI!") do set DB_WITH_PARAMS=%%a
 for /f "tokens=1 delims=?" %%a in ("!DB_WITH_PARAMS!") do set DB_NAME=%%a
 if "!DB_NAME!"=="" set DB_NAME=almdb
-powershell -Command "try { $tcp = New-Object System.Net.Sockets.TcpClient; $tcp.Connect('localhost', 27017); $tcp.Close(); Write-Host 'Connected to MongoDB successfully on localhost:27017'; Write-Host 'Database: %DB_NAME%'; exit 0 } catch { Write-Host 'MongoDB is not running'; exit 1 }"
+echo Database: !DB_NAME!
+echo.
+powershell -Command "try { $tcp = New-Object System.Net.Sockets.TcpClient; $tcp.Connect('localhost', 27017); $tcp.Close(); Write-Host 'Connected to MongoDB successfully on localhost:27017'; exit 0 } catch { Write-Host 'MongoDB is not running'; exit 1 }"
 set MONGO_STATUS=%errorLevel%
 
 if %MONGO_STATUS% equ 0 (
