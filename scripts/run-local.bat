@@ -198,21 +198,23 @@ if %SKIP_MONGO_TEST% equ 1 (
 )
 
 REM Create temporary Python script to test connection
-echo import sys > test_mongo.py
-echo from pymongo import MongoClient >> test_mongo.py
-echo uri = r'''!MONGO_URI!''' >> test_mongo.py
-echo try: >> test_mongo.py
-echo     client = MongoClient(uri, serverSelectionTimeoutMS=5000) >> test_mongo.py
-echo     client.server_info() >> test_mongo.py
-echo     print('Connected to MongoDB successfully') >> test_mongo.py
-echo     sys.exit(0) >> test_mongo.py
-echo except Exception as e: >> test_mongo.py
-echo     print(f'Error: {e}') >> test_mongo.py
-echo     sys.exit(1) >> test_mongo.py
+(
+echo import sys
+echo from pymongo import MongoClient
+echo uri = r"""!MONGO_URI!"""
+echo try:
+echo     client = MongoClient^(uri, serverSelectionTimeoutMS=5000^)
+echo     client.server_info^(^)
+echo     print^('Connected to MongoDB successfully'^)
+echo     sys.exit^(0^)
+echo except Exception as e:
+echo     print^(f'Error: {e}'^)
+echo     sys.exit^(1^)
+) > test_mongo.py
 
 %PYTHON_CMD% test_mongo.py
 set CONN_STATUS=%errorLevel%
-del test_mongo.py
+del test_mongo.py 2>nul
 
 if %CONN_STATUS% equ 0 (
     echo Connection verified successfully!
@@ -223,43 +225,47 @@ if %CONN_STATUS% equ 0 (
     set /p CLEAN_DB="Do you want to clean the database? (y/N): "
     if /i "!CLEAN_DB!"=="y" (
         echo Cleaning database...
-        echo from pymongo import MongoClient > clean_mongo.py
-        echo uri = r'''!MONGO_URI!''' >> clean_mongo.py
-        echo client = MongoClient(uri) >> clean_mongo.py
-        echo db = client.get_database() >> clean_mongo.py
-        echo collections = db.list_collection_names() >> clean_mongo.py
-        echo for col in collections: >> clean_mongo.py
-        echo     db[col].delete_many({}) >> clean_mongo.py
-        echo     print(f'Cleared collection: {col}') >> clean_mongo.py
-        echo print('Database cleaned successfully') >> clean_mongo.py
+        (
+        echo from pymongo import MongoClient
+        echo uri = r"""!MONGO_URI!"""
+        echo client = MongoClient^(uri^)
+        echo db = client.get_database^(^)
+        echo collections = db.list_collection_names^(^)
+        echo for col in collections:
+        echo     db[col].delete_many^({}^)
+        echo     print^(f'Cleared collection: {col}'^)
+        echo print^('Database cleaned successfully'^)
+        ^) > clean_mongo.py
         
         %PYTHON_CMD% clean_mongo.py
-        del clean_mongo.py
+        del clean_mongo.py 2>nul
         echo.
     )
     
     echo Fetching collection statistics...
     REM Create temporary Python script for statistics
-    echo from pymongo import MongoClient > stats_mongo.py
-    echo uri = r'''!MONGO_URI!''' >> stats_mongo.py
-    echo client = MongoClient(uri) >> stats_mongo.py
-    echo db = client.get_database() >> stats_mongo.py
-    echo collections = db.list_collection_names() >> stats_mongo.py
-    echo print('') >> stats_mongo.py
-    echo print('Collections:') >> stats_mongo.py
-    echo print('-' * 50) >> stats_mongo.py
-    echo if collections: >> stats_mongo.py
-    echo     for col in sorted(collections): >> stats_mongo.py
-    echo         count = db[col].count_documents({}) >> stats_mongo.py
-    echo         print(f'{col}: {count} documents') >> stats_mongo.py
-    echo     total = sum([db[col].count_documents({}) for col in collections]) >> stats_mongo.py
-    echo     print('-' * 50) >> stats_mongo.py
-    echo     print(f'Total documents: {total}') >> stats_mongo.py
-    echo else: >> stats_mongo.py
-    echo     print('No collections found') >> stats_mongo.py
+    (
+    echo from pymongo import MongoClient
+    echo uri = r"""!MONGO_URI!"""
+    echo client = MongoClient^(uri^)
+    echo db = client.get_database^(^)
+    echo collections = db.list_collection_names^(^)
+    echo print^(''^)
+    echo print^('Collections:'^)
+    echo print^('-' * 50^)
+    echo if collections:
+    echo     for col in sorted^(collections^):
+    echo         count = db[col].count_documents^({}^)
+    echo         print^(f'{col}: {count} documents'^)
+    echo     total = sum^([db[col].count_documents^({}^) for col in collections]^)
+    echo     print^('-' * 50^)
+    echo     print^(f'Total documents: {total}'^)
+    echo else:
+    echo     print^('No collections found'^)
+    ^) > stats_mongo.py
     
     %PYTHON_CMD% stats_mongo.py
-    del stats_mongo.py
+    del stats_mongo.py 2>nul
 ) else (
     echo Warning: Could not verify connection
     echo Please check: 1) URI is correct, 2) Network connectivity, 3) Credentials
@@ -288,40 +294,47 @@ if %MONGO_STATUS% equ 0 (
     set /p CLEAN_DB="Do you want to clean the database? (y/N): "
     if /i "!CLEAN_DB!"=="y" (
         echo Cleaning database...
-        echo from pymongo import MongoClient > clean_mongo.py
-        echo uri = r'''!MONGO_URI!''' >> clean_mongo.py
-        echo client = MongoClient(uri) >> clean_mongo.py
-        echo db = client.get_database() >> clean_mongo.py
-        echo collections = db.list_collection_names() >> clean_mongo.py
-        echo for col in collections: >> clean_mongo.py
-        echo     db[col].delete_many({}) >> clean_mongo.py
-        echo     print(f'Cleared collection: {col}') >> clean_mongo.py
-        echo print('Database cleaned successfully') >> clean_mongo.py
+        (
+        echo from pymongo import MongoClient
+        echo uri = r"""!MONGO_URI!"""
+        echo client = MongoClient^(uri^)
+        echo db = client.get_database^(^)
+        echo collections = db.list_collection_names^(^)
+        echo for col in collections:
+        echo     db[col].delete_many^({}^)
+        echo     print^(f'Cleared collection: {col}'^)
+        echo print^('Database cleaned successfully'^)
+        ^) > clean_mongo.py
         
         %PYTHON_CMD% clean_mongo.py
-        del clean_mongo.py
+        del clean_mongo.py 2>nul
         echo.
     )
     
     echo Fetching collection statistics...
     REM Create temporary Python script for statistics
-    echo from pymongo import MongoClient > stats_mongo.py
-    echo uri = r'''!MONGO_URI!''' >> stats_mongo.py
-    echo client = MongoClient(uri) >> stats_mongo.py
-    echo db = client.get_database() >> stats_mongo.py
-    echo collections = db.list_collection_names() >> stats_mongo.py
-    echo print('') >> stats_mongo.py
-    echo print('Collections:') >> stats_mongo.py
-    echo print('-' * 50) >> stats_mongo.py
-    echo if collections: >> stats_mongo.py
-    echo     for col in sorted(collections): >> stats_mongo.py
-    echo         count = db[col].count_documents({}) >> stats_mongo.py
-    echo         print(f'{col}: {count} documents') >> stats_mongo.py
-    echo     total = sum([db[col].count_documents({}) for col in collections]) >> stats_mongo.py
-    echo     print('-' * 50) >> stats_mongo.py
-    echo     print(f'Total documents: {total}') >> stats_mongo.py
-    echo else: >> stats_mongo.py
-    echo     print('No collections found') >> stats_mongo.py
+    (
+    echo from pymongo import MongoClient
+    echo uri = r"""!MONGO_URI!"""
+    echo client = MongoClient^(uri^)
+    echo db = client.get_database^(^)
+    echo collections = db.list_collection_names^(^)
+    echo print^(''^)
+    echo print^('Collections:'^)
+    echo print^('-' * 50^)
+    echo if collections:
+    echo     for col in sorted^(collections^):
+    echo         count = db[col].count_documents^({}^)
+    echo         print^(f'{col}: {count} documents'^)
+    echo     total = sum^([db[col].count_documents^({}^) for col in collections]^)
+    echo     print^('-' * 50^)
+    echo     print^(f'Total documents: {total}'^)
+    echo else:
+    echo     print^('No collections found'^)
+    ^) > stats_mongo.py
+    
+    %PYTHON_CMD% stats_mongo.py
+    del stats_mongo.py 2>nul
     
     %PYTHON_CMD% stats_mongo.py
     del stats_mongo.py
