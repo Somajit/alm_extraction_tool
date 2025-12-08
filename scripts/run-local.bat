@@ -201,13 +201,13 @@ set "MONGO_URI_PARAM=!MONGO_URI!"
 %PYTHON_CMD% "%~dp0mongo_helper.py" test
 set CONN_STATUS=%errorLevel%
 
+goto mongo_connected
 if %CONN_STATUS% equ 0 (
     echo Connection verified successfully!
     echo.
 ) else (
-    echo Warning: Could not verify connection
-
-    echo Please check: 1) URI is correct, 2) Network connectivity, 3) Credentials
+    echo WARNING: Could not verify MongoDB connection
+    echo Please check: 1) MongoDB URI is correct, 2) Network connectivity, 3) MongoDB credentials
     echo Continuing anyway... Connection will be tested when starting services.
 )
 goto mongo_connected
