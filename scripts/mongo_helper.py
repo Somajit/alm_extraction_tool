@@ -53,13 +53,19 @@ def show_stats(uri):
         return 1
 
 if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        print('Usage: mongo_helper.py <command> <uri>')
+    # Get URI from environment variable to avoid command-line parsing issues
+    uri = os.environ.get('MONGO_URI_PARAM')
+    
+    if not uri:
+        print('Error: MONGO_URI_PARAM environment variable not set')
+        sys.exit(1)
+    
+    if len(sys.argv) < 2:
+        print('Usage: mongo_helper.py <command>')
         print('Commands: test, clean, stats')
         sys.exit(1)
     
     command = sys.argv[1]
-    uri = sys.argv[2]
     
     if command == 'test':
         sys.exit(test_connection(uri))

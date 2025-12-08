@@ -197,7 +197,8 @@ if %SKIP_MONGO_TEST% equ 1 (
     goto mongo_connected
 )
 
-%PYTHON_CMD% "%~dp0mongo_helper.py" test "!MONGO_URI!"
+set "MONGO_URI_PARAM=!MONGO_URI!"
+%PYTHON_CMD% "%~dp0mongo_helper.py" test
 set CONN_STATUS=%errorLevel%
 
 if %CONN_STATUS% equ 0 (
@@ -208,12 +209,14 @@ if %CONN_STATUS% equ 0 (
     set /p CLEAN_DB="Do you want to clean the database? (y/N): "
     if /i "!CLEAN_DB!"=="y" (
         echo Cleaning database...
-        %PYTHON_CMD% "%~dp0mongo_helper.py" clean "!MONGO_URI!"
+        set "MONGO_URI_PARAM=!MONGO_URI!"
+        %PYTHON_CMD% "%~dp0mongo_helper.py" clean
         echo.
     )
     
     echo Fetching collection statistics...
-    %PYTHON_CMD% "%~dp0mongo_helper.py" stats "!MONGO_URI!"
+    set "MONGO_URI_PARAM=!MONGO_URI!"
+    %PYTHON_CMD% "%~dp0mongo_helper.py" stats
 ) else (
     echo Warning: Could not verify connection
 
@@ -242,12 +245,14 @@ if %MONGO_STATUS% equ 0 (
     set /p CLEAN_DB="Do you want to clean the database? (y/N): "
     if /i "!CLEAN_DB!"=="y" (
         echo Cleaning database...
-        %PYTHON_CMD% "%~dp0mongo_helper.py" clean "!MONGO_URI!"
+        set "MONGO_URI_PARAM=!MONGO_URI!"
+        %PYTHON_CMD% "%~dp0mongo_helper.py" clean
         echo.
     )
     
     echo Fetching collection statistics...
-    %PYTHON_CMD% "%~dp0mongo_helper.py" stats "!MONGO_URI!"
+    set "MONGO_URI_PARAM=!MONGO_URI!"
+    %PYTHON_CMD% "%~dp0mongo_helper.py" stats
     goto mongo_connected
 )
 
