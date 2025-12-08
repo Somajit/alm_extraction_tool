@@ -197,7 +197,8 @@ if %SKIP_MONGO_TEST% equ 1 (
     goto mongo_connected
 )
 
-%PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient(r'''!MONGO_URI!''', serverSelectionTimeoutMS=5000); client.server_info(); print('Connected successfully')"
+set "TEMP_MONGO_URI=!MONGO_URI!"
+%PYTHON_CMD% -c "import os; from pymongo import MongoClient; client = MongoClient(os.environ['TEMP_MONGO_URI'], serverSelectionTimeoutMS=5000); client.server_info(); print('Connected successfully')"
 set CONN_STATUS=%errorLevel%
 
 if %CONN_STATUS% equ 0 (
@@ -208,12 +209,12 @@ if %CONN_STATUS% equ 0 (
     set /p CLEAN_DB="Do you want to clean the database? (y/N): "
     if /i "!CLEAN_DB!"=="y" (
         echo Cleaning database...
-        %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient(r'''!MONGO_URI!'''); db = client.get_database(); [db[col].delete_many({}) for col in db.list_collection_names()]; print('Database cleaned')"
+        %PYTHON_CMD% -c "import os; from pymongo import MongoClient; client = MongoClient(os.environ['TEMP_MONGO_URI']); db = client.get_database(); [db[col].delete_many({}) for col in db.list_collection_names()]; print('Database cleaned')"
         echo.
     )
     
     echo Fetching collection statistics...
-    %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient(r'''!MONGO_URI!'''); db = client.get_database(); cols = sorted(db.list_collection_names()); print(''); print('Collections:'); print('-'*50); [print(f'{c}: {db[c].count_documents({})} documents') for c in cols] if cols else print('No collections'); print('-'*50) if cols else None; print(f'Total: {sum(db[c].count_documents({}) for c in cols)}') if cols else None"
+    %PYTHON_CMD% -c "import os; from pymongo import MongoClient; client = MongoClient(os.environ['TEMP_MONGO_URI']); db = client.get_database(); cols = sorted(db.list_collection_names()); print(''); print('Collections:'); print('-'*50); [print(f'{c}: {db[c].count_documents({})} documents') for c in cols] if cols else print('No collections'); print('-'*50) if cols else None; print(f'Total: {sum(db[c].count_documents({}) for c in cols)}') if cols else None"
 ) else (
     echo Warning: Could not verify connection
 
@@ -242,12 +243,14 @@ if %MONGO_STATUS% equ 0 (
     set /p CLEAN_DB="Do you want to clean the database? (y/N): "
     if /i "!CLEAN_DB!"=="y" (
         echo Cleaning database...
-        %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient(r'''!MONGO_URI!'''); db = client.get_database(); [db[col].delete_many({}) for col in db.list_collection_names()]; print('Database cleaned')"
+        set "TEMP_MONGO_URI=!MONGO_URI!"
+        %PYTHON_CMD% -c "import os; from pymongo import MongoClient; client = MongoClient(os.environ['TEMP_MONGO_URI']); db = client.get_database(); [db[col].delete_many({}) for col in db.list_collection_names()]; print('Database cleaned')"
         echo.
     )
     
     echo Fetching collection statistics...
-    %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient(r'''!MONGO_URI!'''); db = client.get_database(); cols = sorted(db.list_collection_names()); print(''); print('Collections:'); print('-'*50); [print(f'{c}: {db[c].count_documents({})} documents') for c in cols] if cols else print('No collections'); print('-'*50) if cols else None; print(f'Total: {sum(db[c].count_documents({}) for c in cols)}') if cols else None"
+    set "TEMP_MONGO_URI=!MONGO_URI!"
+    %PYTHON_CMD% -c "import os; from pymongo import MongoClient; client = MongoClient(os.environ['TEMP_MONGO_URI']); db = client.get_database(); cols = sorted(db.list_collection_names()); print(''); print('Collections:'); print('-'*50); [print(f'{c}: {db[c].count_documents({})} documents') for c in cols] if cols else print('No collections'); print('-'*50) if cols else None; print(f'Total: {sum(db[c].count_documents({}) for c in cols)}') if cols else None"
     goto mongo_connected
 )
 
