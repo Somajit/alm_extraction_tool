@@ -47,7 +47,7 @@ class ALMConfig:
             "params": {"domain": "required", "project": "required", "parent_id": "optional"},
             "fields": ["id", "name", "parent-id", "description"],
             "query_filter": "parent-id[{parent_id}]",  # Use {parent_id} placeholder
-            "sort_by": "id",
+            "sort_by": "name",
             "sort_order": "asc",
             "page_size": 100
         },
@@ -57,7 +57,7 @@ class ALMConfig:
             "params": {"domain": "required", "project": "required", "parent_id": "optional"},
             "fields": ["id", "name", "parent-id", "status", "description", "owner", "creation-time"],
             "query_filter": "parent-id[{parent_id}]",
-            "sort_by": "id",
+            "sort_by": "name",
             "sort_order": "asc",
             "page_size": 100
         },
@@ -102,7 +102,7 @@ class ALMConfig:
             "params": {"domain": "required", "project": "required", "parent_id": "optional"},
             "fields": ["id", "name", "parent-id", "start-date", "end-date", "description"],
             "query_filter": "parent-id[{parent_id}]",
-            "sort_by": "id",
+            "sort_by": "name",
             "sort_order": "asc",
             "page_size": 100
         },
@@ -112,7 +112,7 @@ class ALMConfig:
             "params": {"domain": "required", "project": "required", "parent_id": "optional"},
             "fields": ["id", "name", "parent-id", "description"],
             "query_filter": "parent-id[{parent_id}]",
-            "sort_by": "id",
+            "sort_by": "name",
             "sort_order": "asc",
             "page_size": 100
         },
@@ -122,7 +122,7 @@ class ALMConfig:
             "params": {"domain": "required", "project": "required", "parent_id": "optional"},
             "fields": ["id", "name", "parent-id", "start-date", "end-date"],
             "query_filter": "parent-id[{parent_id}]",
-            "sort_by": "id",
+            "sort_by": "name",
             "sort_order": "asc",
             "page_size": 100
         },
@@ -360,7 +360,7 @@ class ALMConfig:
         },
         "project": {
             "parent": "domain",
-            "children": ["test-folder", "release", "defect"]
+            "children": ["test-folder", "release-folder", "release", "defect"]
         },
         "test-folder": {
             "parent": "test-folder",  # Self-referencing
@@ -374,8 +374,12 @@ class ALMConfig:
             "parent": "test",
             "children": []
         },
+        "release-folder": {
+            "parent": "release-folder",  # or "project" for root folders
+            "children": ["release-folder", "release"]
+        },
         "release": {
-            "parent": "project",
+            "parent": "release-folder",
             "children": ["release-cycle"]
         },
         "release-cycle": {

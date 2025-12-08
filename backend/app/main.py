@@ -41,6 +41,7 @@ logger.info(f"Connecting to MongoDB: {MONGO_URI.split('@')[-1] if '@' in MONGO_U
 try:
     client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
     db = client.get_default_database()
+    attachments_collection = db.attachments
     logger.info("MongoDB client initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize MongoDB client: {e}")
@@ -378,12 +379,12 @@ async def api_login(request: LoginRequest):
         )
         
         # Fetch and store root folders with project_group
-        root_folders_result = await alm_client.fetch_and_store_root_folders(
+        root_folders_result = await alm_client.fetch_and_store_root_test_folders(
             request.username, request.domain, request.project, request.project_group
         )
-        
-        # Fetch and store releases with project_group
-        releases_result = await alm_client.fetch_and_store_releases(
+
+        # Fetch and store release folders with project_group
+        release_folders_result = await alm_client.fetch_and_store_root_release_folders(
             request.username, request.domain, request.project, request.project_group
         )
         
