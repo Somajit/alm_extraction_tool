@@ -199,13 +199,16 @@ if %SKIP_MONGO_TEST% equ 1 (
 
 %PYTHON_CMD% -c "from pymongo import MongoClient; import sys; client = MongoClient('''!MONGO_URI!''', serverSelectionTimeoutMS=5000); client.server_info(); print('Connected to MongoDB successfully'); sys.exit(0)"
 if %errorLevel% equ 0 (
-    echo MongoDB connection verified successfully!
+    echo Connection verified successfully!
     echo.
     echo Fetching collection statistics...
-    %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient('''!MONGO_URI!'''); db = client.get_database(); collections = db.list_collection_names(); print('\nCollections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')"
+    %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient('''!MONGO_URI!'''); db = client.get_database(); collections = db.list_collection_names(); print(''); print('Collections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')" 2>nul
+    if %errorLevel% neq 0 (
+        echo Could not fetch collection statistics
+    )
 ) else (
-    echo Warning: Could not verify MongoDB connection
-    echo Please check: 1) MongoDB URI is correct, 2) Network connectivity, 3) MongoDB credentials
+    echo Warning: Could not verify connection
+    echo Please check: 1) URI is correct, 2) Network connectivity, 3) Credentials
     echo Continuing anyway... Connection will be tested when starting services.
 )
 goto mongo_connected
@@ -223,14 +226,17 @@ powershell -Command "try { $tcp = New-Object System.Net.Sockets.TcpClient; $tcp.
 set MONGO_STATUS=%errorLevel%
 
 if %MONGO_STATUS% equ 0 (
-    echo MongoDB connection verified successfully!
+    echo Connection verified successfully!
     echo.
     echo Fetching collection statistics...
-    %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient('''!MONGO_URI!'''); db = client.get_database(); collections = db.list_collection_names(); print('\nCollections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')"
+    %PYTHON_CMD% -c "from pymongo import MongoClient; client = MongoClient('''!MONGO_URI!'''); db = client.get_database(); collections = db.list_collection_names(); print(''); print('Collections:'); print('-' * 50); [print(f'{col}: {db[col].count_documents({})} documents') for col in sorted(collections)] if collections else print('No collections found'); total = sum([db[col].count_documents({}) for col in collections]); print('-' * 50); print(f'Total documents: {total}')" 2>nul
+    if %errorLevel% neq 0 (
+        echo Could not fetch collection statistics
+    )
     goto mongo_connected
 )
 
-echo MongoDB is not responding
+echo Not responding
 if !START_MONGO_LOCAL! equ 1 (
         echo.
         echo MongoDB is not running. Starting local MongoDB
