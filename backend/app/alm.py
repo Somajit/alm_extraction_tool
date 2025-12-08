@@ -27,27 +27,20 @@ class ALM:
         self.db = db
         self.use_mock = os.getenv("USE_MOCK_ALM", "false").lower() == "true"
         self.base_url = os.getenv("ALM_BASE_URL", "").rstrip("/")
-        
         if not self.base_url:
             raise ValueError("ALM_BASE_URL not set")
-        
-        # Session state
         self.lwsso_cookie = None
         self.qc_session_cookie = None
         self.alm_user_cookie = None
         self.xsrf_token = None
         self.is_authenticated = False
-        
         # Encryption - Use provided key or generate/retrieve persistent key
         if encryption_key:
             self.cipher = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
         else:
-            # Generate a valid Fernet key (32 url-safe base64-encoded bytes)
-            # This ensures the key format is always valid
             generated_key = Fernet.generate_key()
             self.cipher = Fernet(generated_key)
-            logger.warning("No encryption key provided. Using generated key. Set ALM_ENCRYPTION_KEY in .env for production.")
-        
+            logger.warning("No encryption key provided. Using generated key. Set ENCRYPTION_KEY in .env for production.")
         logger.info(f"ALM Client initialized. Using {'Mock ALM' if self.use_mock else 'Real ALM'}: {self.base_url}")
     
     # =========================================================================
